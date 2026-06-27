@@ -183,7 +183,7 @@ class RerankProvider(Protocol):
 | **事实源** | Markdown(人类可读,本地优先) | LanceDB 单一存储 | Kairos 是程序化 infra,不需人类直读 md;避免 md+索引双写 + cascade 同步守护的复杂度 |
 | **算法位置** | 私有二进制包 `everalgo-*`(源码不可得) | 仓库内,可读可改 | 优先透明、可测、可演进,而非复用现成黑盒算法 |
 | **融合复杂度** | 四层管线 + LR 校准 + MaxSim 父子 | 标准 RRF + 可选 rerank | MVP 优先简单鲁棒;复杂融合列为扩展位,有数据再上 |
-| **记忆类型数** | 8 种 | 3 类(personal/session/experience) | MVP 聚焦三类核心;Kairos 的 personal 近似 EverOS profile+fact,experience 近似 agent_case+skill |
+| **记忆类型数** | 8 种 | 3 类(semantic/episodic/procedural) | MVP 聚焦三类核心(ADR 0006 按认知功能分);Kairos 的 semantic 近似 EverOS profile+fact,procedural 近似 agent_case+skill,episodic 近似 episode |
 | **演进/反思** | OME 离线引擎做异步派生、聚类、反思 | 不做(Non-goal),只做最小提炼 | 控制 MVP 范围;自动演进需配套机制,成本高 |
 | **抽象接口归属** | `component/` 顶层(全局组件) | 抽象放在**记忆模块内**(`modules/memory/contracts/`) | Kairos 当前只有记忆模块用,按 YAGNI 不预先上提为全局;EverOS 是成熟多功能系统,组件全局化合理 |
 

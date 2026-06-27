@@ -29,15 +29,15 @@
 
 ## 影响
 
-三类记忆按本决策分化(见 [memory-types](../modules/memory/memory-types.md)):
+三类记忆按本决策分化(见 [memory-types](../modules/memory/memory-types.md);命名见 [ADR 0006](./0006-memory-classification-by-cognitive-function.md)):
 
-- **个人记忆**:删除靠**冲突更新**(LLM 驱动 UPDATE/DELETE,见 ADR 0004);recency 仅作检索时的轻微降权。不按时间自动过期。
-- **短期会话记忆**:这是唯一**按时间硬淘汰(TTL)**的——因为它的定义就是"会话内有效",过期即应清理。这是生命周期边界,不是"衰减"。
-- **执行经验**:用**强度衰减 + 使用强化**(MemoryBank 式 R = e^(−t/S),被复用则强度 S 增大、衰减变慢)。经验是"启发式假设",越用越可信、久不用则可疑;长期低有效性可标记废弃(soft delete)。
+- **语义记忆 semantic**:删除靠**冲突更新**(LLM 驱动 UPDATE/DELETE,见 ADR 0004);recency 仅作检索时的轻微降权。不按时间自动过期。
+- **情景记忆 episodic**:按 recency + 显著性降权,久未命中可**归档**;需要"会话结束即清"用显式 `forget_session`。不再用一刀切 TTL 硬淘汰(那是旧 `session` 把"短命"当本质的产物,已由 ADR 0006 纠正)。
+- **程序记忆 procedural**:用**强度衰减 + 使用强化**(MemoryBank 式 R = e^(−t/S),被复用则强度 S 增大、衰减变慢)。经验是"启发式假设",越用越可信、久不用则可疑;长期低有效性可标记废弃(soft delete)。
 
 检索层与维护任务的职责据此划分:
 - 检索时:按 recency/strength 对候选**降权排序**(不改变存储)。
-- 维护任务:执行 session TTL 清理(时间硬淘汰)、experience 强度衰减更新;**不**因"时间久"删除个人记忆。
+- 维护任务:执行 episodic 归档/衰减、procedural 强度衰减更新;**不**因"时间久"删除语义记忆。
 - 写入时:LLM 驱动的冲突检测决定是否 UPDATE/DELETE 旧条目。
 
 ## 依据来源

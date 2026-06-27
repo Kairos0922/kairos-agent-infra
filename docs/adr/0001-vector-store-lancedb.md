@@ -28,7 +28,7 @@
 ## 影响
 
 - **主要代价**:OSS 无自动索引维护,新数据需手动 `optimize()` 才并入索引,否则走 flat scan 变慢。需要一个后台维护任务周期性 `optimize()`,并设 `index_cache_size_bytes` 上限防 FD 泄漏。
-- 无原生 TTL,session 记忆过期需应用层 `delete(where=...)` 清理。
+- 无原生 TTL,episodic 记忆归档/保留窗需应用层 `delete(where=...)` 或显式 `forget_session` 清理。
 - FTS 查询串不支持布尔操作符,OR-mode 召回的实现方式待验证(见 [retrieval](../modules/memory/retrieval.md))。
 - 记忆模块通过模块内的 `VectorStore` 抽象依赖它,未来若需更换(如转多节点),写一个新实现跑过契约测试即可替换。
 

@@ -4,13 +4,13 @@
 
 ## 模块职责
 
-管理三类记忆,每类有独立的写入触发、存储结构、检索方式、生命周期/淘汰策略;三类共享一套统一检索层和统一存储抽象(LanceDB)。
+管理三类**长期记忆**,每类有独立的写入触发、存储结构、检索方式、生命周期/淘汰策略;三类共享一套统一检索层和统一存储抽象(LanceDB)。工作记忆(context 压缩)归应用/适配层,不在本模块(ADR 0006)。
 
 | 记忆类型 | 本质 | 文档 |
 |---------|------|------|
-| 长期个人记忆 `personal` | 跨会话、长期稳定的用户事实与偏好 | [memory-types](./memory-types.md) §个人 |
-| 短期会话记忆 `session` | 单次会话内的上下文,有明确生命周期 | [memory-types](./memory-types.md) §会话 |
-| 执行经验 `experience` | 从 Agent 执行 trace 提炼的可复用经验 | [memory-types](./memory-types.md) §经验 |
+| 语义记忆 `semantic` | 关于用户的去情境化事实与偏好("什么是真的") | [memory-types](./memory-types.md) §语义记忆 |
+| 情景记忆 `episodic` | 发生过的对话/事件历史("发生过什么") | [memory-types](./memory-types.md) §情景记忆 |
+| 程序记忆 `procedural` | 从 Agent 执行 trace 提炼的可复用策略("怎么做") | [memory-types](./memory-types.md) §程序记忆 |
 
 ## 模块内部结构
 
@@ -30,14 +30,14 @@ modules/memory/
 │   ├── tokenizer/jieba_tokenizer.py
 │   └── factory.py         # 配置驱动组装
 ├── kinds/             # 三类记忆各自的写入/淘汰逻辑
-│   ├── personal.py
-│   ├── session.py
-│   └── experience.py
+│   ├── semantic.py
+│   ├── episodic.py
+│   └── procedural.py
 ├── retrieval/         # 统一检索层
 │   ├── searcher.py        # 检索编排 + 方法路由
 │   ├── fusion.py          # RRF 等融合(纯计算,同步)
 │   └── recall.py          # 向量/BM25 召回
-└── experience/        # trace → 经验提炼
+└── procedural/        # trace → 程序记忆提炼
     ├── distiller.py
     └── trace_schema.py
 ```
@@ -69,7 +69,7 @@ flowchart LR
 
 | 文档 | 内容 |
 |------|------|
-| [memory-types](./memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰路径;执行经验从 trace 提炼的流程设计 |
+| [memory-types](./memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰路径;程序记忆从 trace 提炼的流程设计 |
 | [retrieval](./retrieval.md) | 统一检索层(向量/BM25/混合RRF/rerank 流程);embedding/rerank/向量库/tokenizer 可插拔抽象接口签名 |
 | [api](./api.md) | 模块对外接口、适配层如何调用、DTO 与领域模型隔离、API 签名草案 |
 | [tradeoffs](./tradeoffs.md) | 记忆相关技术取舍(LanceDB 边界、融合策略、本地vs远程模型)+ 依据来源汇总 |
@@ -79,6 +79,7 @@ flowchart LR
 
 本模块的核心设计取舍记录在 ADR,效果由 benchmark 验证:
 
+- [ADR 0006](../../adr/0006-memory-classification-by-cognitive-function.md):记忆按认知功能分类(工作记忆归应用层,长期记忆分情景/语义/程序)。
 - [ADR 0004](../../adr/0004-no-knowledge-graph-mvp.md):不做知识图谱,先做原子事实 + LLM 驱动 ADD/UPDATE/DELETE。
 - [ADR 0005](../../adr/0005-decay-ranking-conflict-deletion.md):衰减管排序、冲突管删除,三类记忆分化。
 - [benchmark 子项目](../benchmark/README.md):衡量"高精确率、低噪音",是上述取舍的裁判。

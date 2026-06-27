@@ -19,7 +19,7 @@ flowchart LR
 | **Request/Result**(`facade.py` 入出参) | 适配层 ↔ Facade | 适配层 | 模块的稳定接口 |
 | **领域模型**(`modules/memory/models.py`) | 记忆模块内部 | 仅记忆模块 | 领域逻辑 + LanceDB schema |
 
-> **为什么要三层对象、显式翻译?** 它把"对外契约""模块接口""存储 schema"三件事解耦了。存储 schema 改字段(experience 加列)不影响对外 API;对外 API 调整不影响 LanceDB 表结构。每层独立演进——这是"项目资产"长期可维护的关键。代价是多写转换代码,用 Pydantic `model_validate` / 简单 mapper 把成本压到最低。
+> **为什么要三层对象、显式翻译?** 它把"对外契约""模块接口""存储 schema"三件事解耦了。存储 schema 改字段(procedural 加列)不影响对外 API;对外 API 调整不影响 LanceDB 表结构。每层独立演进——这是"项目资产"长期可维护的关键。代价是多写转换代码,用 Pydantic `model_validate` / 简单 mapper 把成本压到最低。
 
 ## 适配层 API(本阶段:进程内 Python API)
 
@@ -33,13 +33,13 @@ from typing import Literal
 class MemoryItem(BaseModel):
     """对外的记忆条目表示,屏蔽内部 schema 细节。"""
     id: str
-    kind: Literal["personal", "session", "experience"]
+    kind: Literal["semantic", "episodic", "procedural"]
     text: str
     score: float | None = None       # 仅检索返回时有
     metadata: dict = {}              # category/task_type/effectiveness 等
 
 class WriteRequest(BaseModel):
-    kind: Literal["personal", "session", "experience"]
+    kind: Literal["semantic", "episodic", "procedural"]
     owner_id: str                    # user_id / session_id / agent_id
     text: str
     metadata: dict = {}              # 各 kind 专有字段
@@ -48,7 +48,7 @@ class WriteRequest(BaseModel):
 class RecallRequest(BaseModel):
     owner_id: str
     query: str
-    kinds: list[Literal["personal", "session", "experience"]] = ["personal"]
+    kinds: list[Literal["semantic", "episodic", "procedural"]] = ["semantic"]
     method: Literal["vector", "keyword", "hybrid"] = "hybrid"
     top_k: int = 10
     use_rerank: bool = False
@@ -76,23 +76,24 @@ class MemoryAdapter:
     async def recall(self, req: RecallRequest) -> RecallResponse: ...
 
     # ---- 会话生命周期 ----
-    async def end_session(self, session_id: str, *, distill: bool = False) -> None:
-        """结束会话:清理 session 记忆;distill=True 时尝试沉淀为 personal。"""
+    async def forget_session(self, session_id: str, *, distill: bool = False) -> None:
+        """遗忘某次会话的情景记忆(episodic);distill=True 时先尝试沉淀为 semantic。
+        注意:工作记忆(context 压缩)归应用层,不在此清理。"""
         ...
 
-    # ---- 执行经验 ----
+    # ---- 程序记忆(procedural) ----
     async def ingest_trace(self, trace: ExecutionTrace) -> list[MemoryItem]:
-        """提交执行 trace,提炼为经验(规则门控→LLM 抽取→去重写入)。
+        """提交执行 trace,提炼为程序记忆(规则门控→LLM 抽取→去重写入)。
         返回提炼出的经验(可能为空)。"""
         ...
 
     async def reinforce(self, experience_id: str, *, success: bool) -> None:
-        """经验被复用后的反馈,更新 effectiveness/reuse_count。"""
+        """程序记忆被复用后的反馈,更新 effectiveness/reuse_count。"""
         ...
 
     # ---- 维护(供后台任务) ----
     async def maintain(self) -> None:
-        """周期性维护:LanceDB optimize() + session TTL 清理 + experience 衰减。"""
+        """周期性维护:LanceDB optimize() + episodic 归档/衰减 + procedural 衰减。"""
         ...
 ```
 
@@ -118,9 +119,9 @@ from kairos.adapter.dto import WriteRequest, RecallRequest
 
 mem = MemoryAdapter(KairosSettings())   # 配置驱动,自动组装实现
 
-# 写一条长期个人偏好
+# 写一条关于用户的长期偏好(语义记忆)
 await mem.remember(WriteRequest(
-    kind="personal", owner_id="user_42",
+    kind="semantic", owner_id="user_42",
     text="偏好简洁、直接的回答,不要冗长铺垫",
     metadata={"category": "preference"},
 ))
@@ -128,7 +129,7 @@ await mem.remember(WriteRequest(
 # 在对话中检索相关记忆
 resp = await mem.recall(RecallRequest(
     owner_id="user_42", query="我喜欢什么样的回答风格?",
-    kinds=["personal"], method="hybrid", top_k=5,
+    kinds=["semantic"], method="hybrid", top_k=5,
 ))
 for item in resp.items:
     print(item.score, item.text)

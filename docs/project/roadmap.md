@@ -24,8 +24,8 @@
 - [ ] 实现:LanceDB store;openai_compat + sentence_transformer embedding;cross_encoder + http_rerank;jieba tokenizer;配置驱动 factory
 - [ ] 共享 `MemoryBase` schema + 三类 kind schema
 - [ ] 统一写入管线(校验→去重→分词→embed→hash→upsert)
-- [ ] 三类记忆的写入/检索/淘汰:personal、session、experience
-- [ ] 执行经验:trace schema + distiller(规则门控+LLM 抽取)+ reinforce 回调 + 衰减/容量淘汰
+- [ ] 三类记忆的写入/检索/淘汰:semantic、episodic、procedural
+- [ ] 程序记忆:trace schema + distiller(规则门控+LLM 抽取)+ reinforce 回调 + 衰减/容量淘汰
 - [ ] 检索层:向量/BM25 召回 + RRF 融合 + 可选 rerank + 方法路由
 - [ ] 后台维护任务(optimize + TTL 清理 + 衰减)
 - [ ] 适配层:DTO + MemoryAdapter + 错误翻译
@@ -89,7 +89,7 @@ flowchart LR
 
 - **接入上下文模块**(`modules/context/`),按上面的通用流程。**这是验证底座可插拔性的第一个真实案例**:如果接入时需要改动记忆模块或底座核心,说明底座抽象有漏,要回补。
 - 此时评估:记忆和上下文是否共享 embedding/向量库抽象?若是,上提到底座(承接阶段一刻意留下的"暂不上提"决策)。
-- **记忆增强**:自动抽取个人记忆、更精细的融合策略、experience 自动分段。
+- **记忆增强**:自动抽取语义记忆、更精细的融合策略、procedural 自动分段。
 
 ### 阶段三:服务化 + 多租户
 

@@ -39,10 +39,10 @@
 
 - [ ] 共享 `MemoryBase` schema + 三类 kind schema(`models.py`)
 - [ ] 统一写入管线(校验→冲突决策→分词→embed→hash→upsert)
-- [ ] personal:显式写入 + 抽取钩子 + LLM 驱动 ADD/UPDATE/DELETE/NOOP + recency 降权
-- [ ] session:追加写入 + TTL 清理 + end_session + 晋升钩子
-- [ ] experience:trace schema + distiller(规则门控 + LLM 抽取)+ reinforce 回调 + 强度衰减/低效淘汰
-- [ ] 后台维护任务(optimize + session TTL 清理 + experience 强度衰减)
+- [ ] semantic:显式写入 + 抽取钩子 + LLM 驱动 ADD/UPDATE/DELETE/NOOP + recency 降权
+- [ ] episodic:显著性门控追加 + recency/salience 降权 + 归档 + forget_session + 晋升钩子
+- [ ] procedural:trace schema + distiller(规则门控 + LLM 抽取)+ reinforce 回调 + 强度衰减/低效淘汰
+- [ ] 后台维护任务(optimize + episodic 归档/衰减 + procedural 强度衰减)
 
 ### 记忆模块 — 检索层 (retrieval)
 
@@ -64,7 +64,7 @@
 ### 适配层 (adapter)
 
 - [ ] 对外 DTO `dto.py`(与领域模型隔离)
-- [ ] `MemoryAdapter`(remember / recall / end_session / ingest_trace / reinforce / maintain)
+- [ ] `MemoryAdapter`(remember / recall / forget_session / ingest_trace / reinforce / maintain)
 - [ ] 错误翻译(内部错误 → 对调用方有意义的形式)
 
 ### 验证与文档
@@ -83,3 +83,4 @@
 - 2026-06-27 升级 CI actions 消除 Node 20 弃用告警(checkout v7、setup-uv v8.2.0),CI 全绿零告警;origin 切换为 SSH(https 通道网络不通)。
 - 2026-06-27 记忆模块设计研讨定案并更新文档:新增 ADR 0004(不做知识图谱)、0005(衰减管排序/冲突管删除);新增 benchmark 一等子项目文档(协议 + 中文数据集规范);修订 memory-types/retrieval/tradeoffs(LLM 驱动 ADD/UPDATE/DELETE、三类衰减分化、记什么)。下一步:benchmark 场景本体需业务输入;或进入记忆模块 models 实现。
 - 2026-06-27 垂直化研讨定案:确立"基座+垂直分层"(教育助手=个人助手+教育垂直),infra 保持通用、垂直靠 namespace/tags/应用层叠加,不 fork schema、暂不加 subject_id。更新 memory-types(垂直化分层节 + tags 字段 + 教育例 + 记忆/领域知识边界)、tradeoffs(为什么不 fork schema/暂不加 subject_id)、benchmark dataset/README(场景本体定两类垂直、教育领域知识不进记忆数据集)、roadmap/PROGRESS。
+- 2026-06-27 记忆分类轴重审定案:新增 ADR 0006(按认知功能分类)。从 personal/session/experience 改为两级分类——工作记忆(context 压缩)归应用/适配层,长期记忆按认知功能分 semantic/episodic/procedural。关键澄清:旧 session 混装"工作缓冲(应用层)+情景召回(infra)",拆开后 episodic 解开"短命"耦合,重定位为工作缓冲的无损可检索后备(显著性门控写入 + recency/relevance 兜底检索)。经联网核源(CoALA 2309.02427 等 6 篇 arXiv 全部核实 + 反方观点)。全量改名同步:memory-types/retrieval/api/tradeoffs/两个 README/everos-analysis/benchmark dataset/roadmap/PROGRESS;ADR 0004/0005 在新轴下重新表述。

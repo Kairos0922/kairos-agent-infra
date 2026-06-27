@@ -33,7 +33,7 @@ flowchart TB
 | `keyword` | 纯关键词检索 | BM25 召回,直接返回 |
 | `hybrid`(默认) | 语义 + 关键词融合 | 双路召回 → RRF 融合 → 可选 rerank |
 
-> **借鉴 EverOS 的"方法→管线路由"**:对外暴露稳定的少数方法枚举,内部用一张路由表把 (method, kind) 映射到具体管线。新增内部融合策略不改对外接口。本阶段路由简单(三选一),但结构上预留"按 kind 走不同管线"的扩展位——未来 experience 可走更复杂融合、personal 走标准 RRF,对外仍是 `hybrid`。
+> **借鉴 EverOS 的"方法→管线路由"**:对外暴露稳定的少数方法枚举,内部用一张路由表把 (method, kind) 映射到具体管线。新增内部融合策略不改对外接口。本阶段路由简单(三选一),但结构上预留"按 kind 走不同管线"的扩展位——未来 procedural 可走更复杂融合、semantic 走标准 RRF、episodic 走 recency+relevance,对外仍是 `hybrid`。
 
 ## 召回层
 
@@ -120,15 +120,17 @@ class RerankProvider(Protocol):
 
 按 ADR 0005,**衰减只在检索时降权,不删记忆**。融合(及可选 rerank)产出相关度排序后,再叠加一层与记忆 kind 相关的降权:
 
-- **personal**:按 `last_used_at` 做**轻微** recency 降权——近期相关的略靠前,但保守,不把仍正确的稳定老事实压没。
-- **experience**:按记忆强度(`effectiveness` / 衰减后强度)降权——经验"越用越靠前,久不用则沉底",降权比 personal 激进。
-- **session**:不降权(本就限定在单会话内、按时序取)。
+- **semantic**:按 `last_used_at` 做**轻微** recency 降权——近期相关的略靠前,但保守,不把仍正确的稳定老事实压没。
+- **episodic**:按 recency + `salience` **较强**降权——情景是过程留痕,时效性强,久未命中的事件沉底(配合归档)。
+- **procedural**:按记忆强度(`effectiveness` / 衰减后强度)降权——经验"越用越靠前,久不用则沉底",降权比 semantic 激进。
 
 ```text
 召回 → 融合(RRF)→ [可选 rerank] → 按 kind 叠加 recency/strength 降权 → top_k 截断
 ```
 
 > **为什么降权放在融合/rerank 之后,而不是揉进融合?** 保持职责单一:融合只管"相关不相关"(语义+关键词),降权只管"新不新/可不可信"(时间+强度)。两者分开,各自可独立调参、可独立被 benchmark 归因。降权系数是保守的乘性因子,避免盖过相关度信号——**精确率优先,降权只做微调**。具体系数由 benchmark 校准。
+
+> **episodic 作兜底召回层**:semantic 是主精确率层(干净、去重);episodic 在 semantic 答不上来时补充上下文,故其降权与 `salience` 门控共同确保过程性噪声不挤占精确率层。定位见 [memory-types §情景记忆](./memory-types.md#情景记忆-episodic)。
 
 ## 可插拔模型抽象接口
 
