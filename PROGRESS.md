@@ -13,7 +13,7 @@
 - [x] 初始化 `pyproject.toml`(依赖、ruff、mypy、pytest-cov、import-linter 配置)
 - [x] 创建 `src/kairos/` 目录骨架(foundation / modules/memory / adapter)
 - [x] 创建 `tests/` 骨架(unit / contracts / integration / conftest)
-- [~] 配置 CI:lint + 类型检查 + 测试 + import-linter 依赖方向检查(本地验证链已通过;CI workflow 待用户建仓库后接入)
+- [x] 配置 CI:lint + 类型检查 + 测试 + import-linter 依赖方向检查(GitHub Actions 验证链,push/PR 到 main 触发,已跑通)
 
 ### 底座 (foundation)
 
@@ -68,4 +68,5 @@
 ## 变更记录
 
 - 2026-06-27 创建 PROGRESS.md;完成设计文档集、项目规范文件、首批 ADR。
-- 2026-06-27 搭建工程化骨架:pyproject.toml(uv 管理)、src/tests 目录、底座 config/errors、记忆模块 contracts 抽象、骨架冒烟测试。验证链全绿(ruff format/lint、mypy strict、import-linter、pytest 覆盖率 100%)。下一步:CI workflow 待建仓库后接入;或继续底座 logging/tracing。
+- 2026-06-27 搭建工程化骨架:pyproject.toml(uv 管理)、src/tests 目录、底座 config/errors、记忆模块 contracts 抽象、骨架冒烟测试。验证链全绿(ruff format/lint、mypy strict、import-linter、pytest 覆盖率 100%)。
+- 2026-06-27 git 仓库初始化并推送到 GitHub(Kairos0922/kairos-agent-infra,public);接入 GitHub Actions CI 验证链,已跑通(18s 全绿)。下一步:继续底座 logging/tracing,或进入记忆模块 models。
