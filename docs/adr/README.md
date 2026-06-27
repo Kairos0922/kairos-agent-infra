@@ -16,6 +16,7 @@
 | [0006](./0006-memory-classification-by-cognitive-function.md) | 记忆按认知功能分类(工作记忆归应用层,长期记忆分情景/语义/程序) | 已接受 |
 | [0007](./0007-memory-mechanism-vs-policy-timing.md) | 记忆模块是机制,时机与质量评估是策略(写入/召回时机 + 选择性召回) | 已接受 |
 | [0008](./0008-procedural-evaluation-decoupling.md) | 程序记忆的 trace 评估/提炼与记忆模块解耦 | 已接受 |
+| [0009](./0009-single-multi-user-scoping-isolation.md) | 单/多用户记忆作用域与隔离(隔离是机制,共享是策略) | 已接受 |
 
 ## 状态说明
 

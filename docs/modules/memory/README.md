@@ -83,6 +83,7 @@ flowchart LR
 - [ADR 0005](../../adr/0005-decay-ranking-conflict-deletion.md):衰减管排序、冲突管删除,三类记忆分化。
 - [ADR 0007](../../adr/0007-memory-mechanism-vs-policy-timing.md):记忆模块是机制,时机与质量评估是策略;写入分 kind、召回选择性(RecallRouter + memory-as-a-tool)。
 - [ADR 0008](../../adr/0008-procedural-evaluation-decoupling.md):程序记忆的 trace 评估/提炼与记忆模块解耦,模块只收已提炼经验。
+- [ADR 0009](../../adr/0009-single-multi-user-scoping-isolation.md):单/多用户作用域与隔离;隔离是机制(强制 prefilter + fail-closed + 契约测试),共享是策略(留阶段二)。
 - [benchmark 子项目](../benchmark/README.md):衡量"高精确率、低噪音",是上述取舍的裁判。
 
 ---

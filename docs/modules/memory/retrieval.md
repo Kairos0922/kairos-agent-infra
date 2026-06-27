@@ -225,15 +225,48 @@ class Searcher:
                  tokenizer: Tokenizer, reranker: RerankProvider | None): ...
 
     async def search(self, *, table: str, query: str, method: str = "hybrid",
-                     where: str | None = None, top_k: int = 10,
+                     scope: "Scope", where: str | None = None, top_k: int = 10,
                      use_rerank: bool = False) -> list[Hit]:
         """统一检索入口。按 method 路由,内部完成召回/融合/rerank。
+        - scope 强制注入 (namespace, owner_id) prefilter(ADR 0009);
+          scope 缺失或无效 → 抛 ValidationError(fail-closed,绝不全量召回)
         - use_rerank=True 但 reranker is None → 抛 NotConfiguredError(fail-fast)
         """
         ...
 ```
 
 `Hit` 是检索层内部结果对象(id + score + 原始行),由 facade 转成领域结果,最终由适配层转 DTO(见 [api](./api.md))。
+
+## 作用域隔离:每次检索必带作用域,缺则拒绝
+
+单用户与多用户**共用一套作用域机制**(单用户是多用户的退化情形,见 [ADR 0009](../../adr/0009-single-multi-user-scoping-isolation.md))。隔离是**机制、安全底线**(不是策略):用户 A 永远不能在检索里看到用户 B 的记忆。
+
+> **两个正交作用域轴(复用现有字段)**:`namespace`(租户/组织硬边界,单用户=`default`)+ `owner_id`(实体归属:user 或 agent)。`tags` 是自由维度,**不参与隔离**。
+
+### 三条硬规则
+
+1. **强制 prefilter**:检索在 `Searcher`/facade 层**强制**注入 `(namespace, owner_id)` 过滤,作为 LanceDB `where(...)` **pre-filter**(检索前缩小工作集,既保 top-k 数量又防跨 owner 泄漏;在 owner 字段建索引时还能加速)。
+2. **fail-closed(默认拒绝)**:`scope` 缺失或无效时**抛 `ValidationError`,绝不返回全量**。"绝不无作用域查询"是铁律——跨租户泄漏的根因业界概括为"一个缺失的过滤器"。
+3. **作用域从可信上下文派生**:`namespace`/`owner_id` 由上层从**可信会话上下文**给出,检索层**不信任调用方自报的越权标识**。隔离断言落在确定性的检索层,不依赖 LLM(依赖 LLM 做访问控制是反模式)。
+
+```python
+# modules/memory/retrieval/searcher.py(草案,作用域对象)
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Scope:
+    namespace: str            # 租户/组织硬边界(单用户=default)
+    owner_id: str             # 实体归属(user 或 agent),必填非空
+
+    def to_where(self) -> str:
+        """渲染成强制 prefilter 片段;与调用方业务 where 以 AND 合并。"""
+        # namespace/owner_id 均非空由构造校验保证;为空在上游已 fail-closed
+        return f"namespace = '{self.namespace}' AND owner_id = '{self.owner_id}'"
+```
+
+> **为什么作用域不当成普通 `where` 任由调用方传?** 普通 `filters` 是"业务过滤"(可有可无、可错);作用域是"安全过滤"(必须有、不可绕过)。把它独立成 `Scope` 强制参数,就杜绝了"某条检索路径忘了加过滤"这个最常见的泄漏通道。这条对应 OWASP LLM02(敏感信息泄露)/ LLM08(向量嵌入弱点),并直接转成契约测试(见 [foundation](../../foundation/foundation.md)):注入 A、B 两 owner,断言"A 的查询永不返回 B 的记录""缺作用域时拒绝而非返回全量"。
+
+> **三类记忆的 owner 语义**:episodic/semantic 严格私有(`owner_id=user_id`);procedural 的 owner 是**显式二选一**(私有 `f(agent_id,user_id)` / 全局技能 `agent_id`),本阶段**只实现私有路径**,全局共享依赖模块外脱敏 pipeline(ADR 0008),留接口位。详见 [memory-types](./memory-types.md)。
 
 ## 选择性召回:RecallRouter 与 memory-as-a-tool
 

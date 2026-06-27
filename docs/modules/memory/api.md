@@ -40,10 +40,10 @@ class MemoryItem(BaseModel):
 
 class WriteRequest(BaseModel):
     kind: Literal["semantic", "episodic", "procedural"]
-    owner_id: str                    # user_id / session_id / agent_id
+    owner_id: str                    # 强制作用域:user_id / agent_id,非空(ADR 0009)
     text: str
     metadata: dict = {}              # 各 kind 专有字段
-    namespace: str = "default"
+    namespace: str = "default"       # 强制作用域:租户/组织硬边界(单用户=default)
 
 class DistilledExperience(BaseModel):
     """一条**已提炼、已评估**的程序记忆经验。由模块外的评估/提炼 pipeline 产出(ADR 0008),
@@ -59,14 +59,14 @@ class DistilledExperience(BaseModel):
     namespace: str = "default"
 
 class RecallRequest(BaseModel):
-    owner_id: str
+    owner_id: str                    # 强制作用域:实体归属(user/agent),非空(ADR 0009)
     query: str
     kinds: list[Literal["semantic", "episodic", "procedural"]] = ["semantic"]
     method: Literal["vector", "keyword", "hybrid"] = "hybrid"
     top_k: int = 10
     use_rerank: bool = False
-    filters: dict = {}               # 翻译成 where 条件
-    namespace: str = "default"
+    filters: dict = {}               # 业务过滤(可选);与作用域 prefilter 以 AND 合并
+    namespace: str = "default"       # 强制作用域:租户/组织硬边界(单用户=default)
     use_router: bool = False         # True:先过 RecallRouter 决定是否/召回哪类(ADR 0007)
 
 class RecallResponse(BaseModel):
@@ -136,6 +136,8 @@ class MemoryAdapter:
 | `ConfigError` | 启动时抛,fail-fast | 部署配置错误 | 启动失败 |
 
 约定:底层 `lancedb`/`openai` 原始异常**绝不**穿透到上层——全在 provider 层封装成 `ProviderError`,否则上层会写出依赖具体实现的 except,破坏可插拔。输入校验由 DTO(Pydantic)+ 适配层完成。
+
+> **作用域强制(ADR 0009)**:`owner_id`/`namespace` 是**强制作用域**,不是普通业务过滤。`owner_id` 缺失/空 → DTO 校验即抛 `ValidationError`;检索层再做一次 fail-closed 兜底(无有效作用域**拒绝查询,绝不返回全量**)。作用域应由上层从**可信会话上下文**派生注入,适配层不信任调用方自报的越权 `owner_id`/`namespace`。这条对应 OWASP LLM02/LLM08,并落为契约测试(注入 A、B 两 owner,断言互不可见)——见 [foundation](../../foundation/foundation.md)、[retrieval §作用域隔离](./retrieval.md#作用域隔离每次检索必带作用域缺则拒绝)。
 
 ## 端到端使用示例(上层视角)
 
