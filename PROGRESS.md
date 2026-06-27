@@ -69,4 +69,5 @@
 
 - 2026-06-27 创建 PROGRESS.md;完成设计文档集、项目规范文件、首批 ADR。
 - 2026-06-27 搭建工程化骨架:pyproject.toml(uv 管理)、src/tests 目录、底座 config/errors、记忆模块 contracts 抽象、骨架冒烟测试。验证链全绿(ruff format/lint、mypy strict、import-linter、pytest 覆盖率 100%)。
-- 2026-06-27 git 仓库初始化并推送到 GitHub(Kairos0922/kairos-agent-infra,public);接入 GitHub Actions CI 验证链,已跑通(18s 全绿)。下一步:继续底座 logging/tracing,或进入记忆模块 models。
+- 2026-06-27 git 仓库初始化并推送到 GitHub(Kairos0922/kairos-agent-infra,public);接入 GitHub Actions CI 验证链,已跑通(18s 全绿)。
+- 2026-06-27 升级 CI actions 消除 Node 20 弃用告警(checkout v7、setup-uv v8.2.0),CI 全绿零告警;origin 切换为 SSH(https 通道网络不通)。下一步:继续底座 logging/tracing,或进入记忆模块 models。
