@@ -4,7 +4,9 @@
 
 ## 第一阶段交付总览
 
-第一阶段范围 = **底座 + 记忆模块**。两块的交付清单:
+第一阶段范围 = **底座 + 记忆模块 + benchmark 子项目**。
+
+> **benchmark 是一等子项目,不是附属测试**(经研讨确定)。它衡量"高精确率、低噪音"这个目标,是记忆模块所有设计取舍的裁判。推进策略:**先评测协议 + harness 框架 + 小规模中文种子集打通端到端,记忆模块边实现边用它验证,数据规模后迭代扩充**。详见 [benchmark](../modules/benchmark/README.md)。
 
 ### 底座(详见 [foundation](../foundation/foundation.md))
 
@@ -29,11 +31,22 @@
 - [ ] 适配层:DTO + MemoryAdapter + 错误翻译
 - [ ] 验证 spike:LanceDB FTS OR-mode 实现确认
 
+### Benchmark 子项目(详见 [modules/benchmark](../modules/benchmark/README.md))
+
+- [ ] 评测协议成文(能力分类、Precision@K/abstention/distractor、写入/检索分离、LLM-judge 防坑)
+- [ ] 场景本体 + 用户属性本体(需业务输入)
+- [ ] harness 框架代码(喂入记忆 → 检索 → 收集 → 打分,通过记忆模块对外接口)
+- [ ] 小规模中文种子集(几十题,覆盖 IE/MR/KU/TR/ABS 五类)
+- [ ] 记忆模块边实现边用 benchmark 验证(回灌设计取舍:去重阈值、融合权重、是否 rerank、衰减系数)
+- [ ] 数据集迭代扩充
+
 ### 文档(本资产)
 
 - [x] 项目层文档(`project/`)
 - [x] 底座文档(`foundation/`)
 - [x] 记忆模块文档(`modules/memory/`)
+- [x] benchmark 子项目文档(`modules/benchmark/`)
+- [x] ADR(0001-0005)
 
 ## 新模块如何接入(通用流程)
 

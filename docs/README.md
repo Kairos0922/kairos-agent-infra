@@ -11,8 +11,10 @@
 docs/
 ├── project/        # 整体项目:定位、架构、演进路线 —— 跨模块的全局视角
 ├── foundation/     # 底座:所有模块共享的横切关注点(配置/错误/日志/trace/接口风格/工程化)
+├── adr/            # 架构决策记录(可追溯的重大技术决策)
 └── modules/
-    └── memory/     # 记忆模块:自包含,含自己的检索层、模型抽象、API、取舍、参考分析
+    ├── memory/     # 记忆模块:自包含,含自己的检索层、模型抽象、API、取舍、参考分析
+    └── benchmark/  # benchmark 子项目:记忆模块的裁判(评测协议 + 中文数据集规范)
 ```
 
 > **关于"为什么 embedding/向量库等抽象在记忆模块里,而不在底座":** 它们目前只有记忆模块使用。按"避免过度设计"原则,模块的东西就放在模块内;等出现第二个模块确有复用需求时,再评估是否上提到底座。底座只放**现在就真正横切**的东西。
@@ -44,11 +46,19 @@ docs/
 | [tradeoffs](./modules/memory/tradeoffs.md) | 记忆相关技术取舍(LanceDB 边界、融合策略、本地vs远程模型)+ 依据来源 |
 | [everos-analysis](./modules/memory/everos-analysis.md) | 参考项目 EverOS 的记忆/检索设计分析:借鉴什么、不同取舍 |
 
+### Benchmark 子项目 [`modules/benchmark/`](./modules/benchmark/)
+
+| 文档 | 内容 |
+|------|------|
+| [README](./modules/benchmark/README.md) | 定位(一等子项目)、目标、推进策略、与记忆模块关系 |
+| [protocol](./modules/benchmark/protocol.md) | 评测协议:五类能力、Precision@K/abstention/distractor、写入与检索分离归因、LLM-judge 防坑 |
+| [dataset](./modules/benchmark/dataset.md) | 中文数据集构造规范:场景本体、LLM 生成 + 人工校验、证据标注、haystack 构造 |
+
 ### 架构决策记录 [`adr/`](./adr/)
 
 | 文档 | 内容 |
 |------|------|
-| [ADR 索引](./adr/README.md) | 重大技术决策记录(背景/候选/结论/理由/影响)。已含:LanceDB 选型、RRF 融合、抽象归模块。 |
+| [ADR 索引](./adr/README.md) | 重大技术决策记录(背景/候选/结论/理由/影响)。已含:LanceDB 选型、RRF 融合、抽象归模块、不做知识图谱、衰减/删除分离。 |
 
 ## 阅读顺序建议
 

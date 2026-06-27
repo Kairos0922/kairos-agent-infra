@@ -11,6 +11,8 @@
 | [0001](./0001-vector-store-lancedb.md) | 向量库选用 LanceDB | 已接受 |
 | [0002](./0002-hybrid-fusion-rrf.md) | 混合检索融合策略选用 RRF | 已接受 |
 | [0003](./0003-abstractions-in-module.md) | 抽象接口归属记忆模块,不预先上提到底座 | 已接受 |
+| [0004](./0004-no-knowledge-graph-mvp.md) | MVP 不做知识图谱,先做原子事实 | 已接受 |
+| [0005](./0005-decay-ranking-conflict-deletion.md) | 衰减管排序,冲突管删除(两套机制分开) | 已接受 |
 
 ## 状态说明
 
