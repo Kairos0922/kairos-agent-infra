@@ -34,7 +34,7 @@
 ### Benchmark 子项目(详见 [modules/benchmark](../modules/benchmark/README.md))
 
 - [ ] 评测协议成文(能力分类、Precision@K/abstention/distractor、写入/检索分离、LLM-judge 防坑)
-- [ ] 场景本体 + 用户属性本体(需业务输入)
+- [ ] 场景本体 + 用户属性本体(垂直已定:个人助理 + 教育助手;属性本体待细化)
 - [ ] harness 框架代码(喂入记忆 → 检索 → 收集 → 打分,通过记忆模块对外接口)
 - [ ] 小规模中文种子集(几十题,覆盖 IE/MR/KU/TR/ABS 五类)
 - [ ] 记忆模块边实现边用 benchmark 验证(回灌设计取舍:去重阈值、融合权重、是否 rerank、衰减系数)
