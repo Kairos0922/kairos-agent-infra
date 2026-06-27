@@ -1,0 +1,118 @@
+[project]
+name = "kairos-agent-infra"
+version = "0.1.0"
+description = "解耦的 Agent 基础设施:记忆、上下文等模块独立演进、可插拔"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # 仅声明当前阶段确需的依赖;embedding/rerank 等重依赖等实现对应任务时再按需加(YAGNI)
+    "lancedb>=0.13",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+# 本地 embedding/rerank 模型相关依赖,等实现 sentence_transformer / cross_encoder provider 时启用
+# local-models = ["sentence-transformers>=3.0"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "import-linter>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kairos"]
+
+# ---------------------------------------------------------------------------
+# Ruff:格式化 + lint
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",          # pyflakes
+    "I",          # isort(import 排序)
+    "UP",         # pyupgrade
+    "B",          # flake8-bugbear
+    "ASYNC",      # flake8-async
+    "RUF",        # ruff 专有规则
+]
+
+# ---------------------------------------------------------------------------
+# Mypy:类型检查。foundation 与各模块的 contracts 要求严格
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+# lancedb 等三方库暂无完整类型存根,忽略其缺失
+module = ["lancedb.*"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Pytest + 覆盖率
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["src/kairos"]
+branch = true
+
+[tool.coverage.report]
+# 核心模块覆盖率门槛见 CLAUDE.md(≥80%);此处为全局兜底,CI 中对核心模块单独把关
+show_missing = true
+
+# ---------------------------------------------------------------------------
+# Import Linter:把架构纪律(依赖方向)写成可检查的契约
+# 规则依据 docs/foundation/foundation.md 与 docs/project/architecture.md
+#
+# 注:契约的 source_modules 必须是已存在的包,否则 lint-imports 报错。
+# 因此按 "grow by task" 原则:包被创建时,同步激活对应契约(取消下方注释)。
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "kairos"
+
+[[tool.importlinter.contracts]]
+name = "底座不依赖任何模块或适配层"
+type = "forbidden"
+source_modules = ["kairos.foundation"]
+forbidden_modules = ["kairos.modules", "kairos.adapter"]
+
+# 待 kinds/retrieval/experience 包创建后激活:
+# [[tool.importlinter.contracts]]
+# name = "记忆领域逻辑不依赖具体实现(providers)与第三方存储库"
+# type = "forbidden"
+# source_modules = [
+#     "kairos.modules.memory.kinds",
+#     "kairos.modules.memory.retrieval",
+#     "kairos.modules.memory.experience",
+# ]
+# forbidden_modules = [
+#     "kairos.modules.memory.providers",
+#     "lancedb",
+# ]
+
+# 待 providers 包创建后激活:
+# [[tool.importlinter.contracts]]
+# name = "适配层只依赖模块 facade,不碰模块内部实现"
+# type = "forbidden"
+# source_modules = ["kairos.adapter"]
+# forbidden_modules = ["kairos.modules.memory.providers"]

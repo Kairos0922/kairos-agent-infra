@@ -1,0 +1,25 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+dist/
+build/
+
+# 本地数据(LanceDB 默认存储目录)
+.kairos/
+
+# 环境与密钥
+.env
+.env.*
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/

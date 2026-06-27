@@ -1,0 +1,124 @@
+# 技术取舍与依据来源
+
+本文记录记忆模块相关的关键技术决策,给出"为什么这样选"、备选方案,以及外部事实的依据来源。凡依赖外部事实(LanceDB 能力、EverOS 实现)的论断都标注来源或"待验证"。
+
+> 项目层/跨模块的取舍(如"抽象接口归模块还是底座""共享上提时机")见 [project/overview](../../project/overview.md) 与 [project/roadmap](../../project/roadmap.md)。本文只谈记忆/检索的具体技术。
+
+## 向量库:为什么选 LanceDB(及其适用边界)
+
+### 选定理由
+
+LanceDB OSS 作为**进程内嵌入式**向量库,单一存储同时承载:向量 ANN、BM25 全文、SQL 元数据过滤、原生 hybrid(默认 RRF)+ 可插拔 reranker、Pydantic schema、完整 CRUD + upsert、Lance 格式版本化/time-travel。这套组合对记忆系统高度契合——**一个库覆盖检索层需要的全部底层能力,无需额外拼 ES(全文)+ 向量库**。
+
+| 需求 | LanceDB | 来源 |
+|------|---------|------|
+| 嵌入式、无独立服务、本地文件存储 | ✅ 已验证 | docs.lancedb.com/storage |
+| 向量 ANN(IVF/HNSW 系)、cosine | ✅ 已验证 | docs.lancedb.com/indexing/vector-index |
+| 原生 BM25 全文检索 | ✅ 已验证(Lance-native FTS) | docs.lancedb.com/indexing/fts-index |
+| 原生混合检索,默认 RRF | ✅ 已验证(默认 `RRFReranker()`) | docs.lancedb.com/search/hybrid-search |
+| 可插拔 + 自定义 reranker | ✅ 已验证(`Reranker` 基类) | docs.lancedb.com/reranking |
+| Pydantic schema(LanceModel) | ✅ 已验证 | docs.lancedb.com/search/hybrid-search |
+| upsert / merge_insert / 条件删除 | ✅ 已验证 | docs.lancedb.com/tables/update |
+| SQL where 过滤 + prefilter/postfilter | ✅ 已验证 | docs.lancedb.com/search/filtering |
+| 版本化 / time-travel | ✅ 已验证 | docs.lancedb.com/tables/versioning |
+| 中文分词(jieba)FTS | ✅ 已验证(内置 jieba tokenizer) | docs.lancedb.com/indexing/fts-index |
+
+### 适用边界与已知限制(必须正视)
+
+| 限制 | 影响 | 对策 | 来源 |
+|------|------|------|------|
+| **OSS 无自动索引维护**,新数据需手动 `optimize()`,否则走 flat scan 变慢 | 持续写入的记忆系统的**主要运维负担** | 后台维护任务周期 `optimize()`(见 [memory-types](./memory-types.md));约每 10万行/20次写 optimize | docs.lancedb.com/search/full-text-search |
+| **无原生 TTL** | session 记忆过期需自己清理 | 维护任务 `delete(where="expires_at < now")` | 文档未见,**已确认无此能力** |
+| **FTS 查询串不支持布尔操作符** OR/AND | OR-mode 召回实现方式受限 | 通过 query 构造 API 实现,**【待验证】**具体手段 | docs.lancedb.com/search/full-text-search |
+| `index_cache_size` 不设上限可能 FD 泄漏到 EMFILE | 长期运行进程崩溃风险 | 配 `index_cache_size_bytes` 上限(默认 16MB) | 借鉴 EverOS 实测(settings.py) |
+| 本地/块存储不跨实例共享 | 不适合多节点共享同一表 | 本阶段单机,符合 Non-goal | docs.lancedb.com/storage |
+| 自动 embedding、自动索引、服务端 embedding 是 **Enterprise** 特性 | OSS 要自己管 embedding 与索引 | 我们本就在应用层管 embedding(Provider 抽象),不依赖库的自动特性 | docs.lancedb.com/embedding |
+
+> **结论**:LanceDB 能力与记忆系统需求高度匹配,最大代价是**索引维护要自己调度**。这个代价可控(一个后台任务),换来"单库覆盖全部检索能力 + 嵌入式零运维部署",对单机 MVP 划算。未来转向多节点高并发需重新评估。
+
+### 备选方案
+
+| 备选 | 为什么没选 |
+|------|-----------|
+| **Chroma** | 嵌入式向量库,但 BM25/混合检索不如 LanceDB 成熟;Lance 列式格式 + time-travel 是额外优势。 |
+| **Qdrant / Weaviate / Milvus** | client-server 架构,需独立服务进程,违背"嵌入式单机"取向;运维更重。 |
+| **PostgreSQL + pgvector + tsvector** | 一库搞定向量+全文可行,但需 PG 实例(非嵌入式),且 ANN 与全文融合要自己拼,不如 LanceDB 原生 hybrid 顺手。作为"已有 PG 基础设施"场景的备选保留。 |
+
+## 混合检索融合策略:为什么选 RRF
+
+详细对比见 [retrieval](./retrieval.md)。要点:
+
+- **选 RRF**:只依赖排名、跨路天然可比、单参数鲁棒,且是 LanceDB 默认融合器【已验证】。
+- **备选-加权分数融合**:保留为接口参数(`weights`),默认不用——cosine 与 BM25 量纲不同,归一化难调。
+- **扩展位-LR 校准融合**:EverOS 用 `cosine_to_lr_score` 把 cosine 与 BM25 校准到同一概率尺度再比较【来源:EverOS `hierarchy.py`,但算法实现在私有包 `everalgo-rank`,**内部实现拿不到**】。更精细,列为后续扩展——RRF 已足够覆盖 MVP,且实现透明可测。
+
+> **取舍哲学**:本阶段优先**透明、可测、鲁棒**的标准方法(RRF),而非精细但黑盒的方法(LR 校准)。等真实数据证明 RRF 不够用再上更复杂融合——避免过早优化。
+
+## 本地 vs 远程模型(embedding / rerank)
+
+**不做非此即彼的选择,用抽象接口让两者都可选、可切换。**
+
+| | 本地模型 | 远程 API |
+|---|---|---|
+| embedding | sentence_transformer(进程内) | openai_compat(OpenAI/DeepInfra/...) |
+| rerank | cross_encoder(进程内) | http_rerank(Cohere/Jina/百炼...) |
+| 优点 | 无网络依赖、无 per-call 成本、数据不出域 | 质量可能更高、无需本地算力、易扩容 |
+| 缺点 | 占本地算力/内存、质量受模型大小限 | 有延迟/成本/限流、数据出域 |
+
+**关键洞察**(借鉴 EverOS):OpenAI 兼容协议是"本地与远程的最大公约数"——本地 vLLM/Ollama 也讲 OpenAI 协议。所以 `openai_compat` 一个实现 + 不同 `base_url` 就覆盖"远程 API"和"本地自托管服务"两种部署,无需为每家厂商分叉。纯进程内模型(无 HTTP)才单独做 `sentence_transformer`。
+
+> **为什么不替用户决定?** 本地 vs 远程是**部署决策**,取决于数据合规、算力预算、质量要求——infra 不该替用户拍板。infra 的职责是提供干净抽象,让这个决策变成一行配置(`embedding.impl`)。这正是可插拔设计的价值。
+
+## 其它取舍速览
+
+| 决策 | 选择 | 理由 | 备选 |
+|------|------|------|------|
+| 存储事实源 | LanceDB 单一存储 | 避免 EverOS 式 md+索引双写与 cascade 同步复杂度;infra 定位无需人类直读 | EverOS 的 Markdown 事实源 + 派生索引 |
+| 检索算法位置 | 仓库内、可读可改 | 透明、可测、可演进 | EverOS 把算法放私有二进制包 `everalgo-*` |
+| 对外 API 形态 | 进程内 async Python 库 | MVP 单机,零网络开销;适配层预留服务化 | 直接上 HTTP 服务(过早) |
+| 分词 | 应用层 jieba,存 `text_tokens` 列 | 换分词器不动 schema/不依赖库内置语言支持 | 依赖 LanceDB 内置 tokenizer |
+| trace 提炼 | 规则门控 + 单次 LLM 抽取 | 控成本、避免过度设计 | 自动分段 + 反思循环(过重) |
+
+## 记忆模块的技术风险
+
+(项目级风险见 [project/roadmap](../../project/roadmap.md);此处只列记忆/检索相关。)
+
+| 风险 | 等级 | 说明 | 缓解 |
+|------|------|------|------|
+| LanceDB 索引维护负担 | 中 | 维护任务失效则检索退化为 flat scan 变慢 | 维护任务可观测;监控 `num_unindexed_rows`;告警 |
+| FD 泄漏 / EMFILE | 中 | 长期运行 + 频繁 optimize 耗尽 FD | 配 `index_cache_size_bytes`;压测验证 |
+| embedding 维度锁定 | 中 | 向量列维度建表即固定,换模型若维度不同需重建表 + re-embed | `dim` 配置 + 启动校验;换模型走"重建表 + 回填"流程 |
+| 经验提炼质量 | 中 | LLM 抽取经验可能噪声大、过时,污染检索 | 规则门控 + 去重 + effectiveness 衰减 + 低效淘汰 |
+| FTS OR-mode 实现待验证 | 低-中 | LanceDB FTS 不支持查询串布尔操作符,OR 实现方式未确认 | 落地前 spike 验证;失败则退化为 token 分别查询后合并 |
+| 去重阈值难调 | 低 | 0.92 是经验值,过高漏去重、过低误合并 | 设为可配;真实数据校准;记录被合并条目便于回溯 |
+
+## 依据来源汇总
+
+### LanceDB(官方文档,已验证)
+
+- 存储/嵌入式/并发:https://docs.lancedb.com/storage/index.md
+- 向量索引/度量:https://docs.lancedb.com/indexing/vector-index.md
+- 全文检索/BM25/增量限制:https://docs.lancedb.com/indexing/fts-index.md 、https://docs.lancedb.com/search/full-text-search.md
+- 混合检索/默认 RRF:https://docs.lancedb.com/search/hybrid-search.md
+- Reranker:https://docs.lancedb.com/reranking.md
+- CRUD/merge_insert/软删除:https://docs.lancedb.com/tables/update.md
+- 过滤/prefilter:https://docs.lancedb.com/search/filtering.md
+- 版本化:https://docs.lancedb.com/tables/versioning.md
+- embedding registry:https://docs.lancedb.com/embedding/index.md
+- FTS 规模演示:https://lancedb.com/blog/feature-full-text-search/
+
+### EverOS(实际克隆源码,commit `b7d15f7`)
+
+完整分析见 [everos-analysis](./everos-analysis.md)。关键文件:`docs/how-memory-works.md`、`src/everos/memory/search/{manager,adapter,hierarchy}.py`、`src/everos/component/{embedding,rerank,tokenizer}/protocol.py`、`src/everos/infra/persistence/lancedb/tables/episode.py`。
+
+### 待验证清单(落地前需确认)
+
+- LanceDB 当前版本号与各特性(reranker 类、FTS query API)的最低版本要求(本轮未核 PyPI changelog)。
+- LanceDB FTS 的 **OR-mode 查询**具体如何用当前 query API 构造(见 [retrieval](./retrieval.md))。
+- 非 S3 对象存储(GCS/Azure)上的并发写原子性(本阶段单机,暂不影响)。
+- LanceDB 精确的规模上限/并发上限(文档只给定性描述,无硬数字)。
+- EverOS 私有包 `everalgo-*` 的算法内部实现(**不可得**,仅能从调用点推断契约)。
+
+---
+
+下一篇:[everos-analysis](./everos-analysis.md) — EverOS 参考分析。
