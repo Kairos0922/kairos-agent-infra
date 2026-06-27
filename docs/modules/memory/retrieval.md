@@ -235,6 +235,63 @@ class Searcher:
 
 `Hit` 是检索层内部结果对象(id + score + 原始行),由 facade 转成领域结果,最终由适配层转 DTO(见 [api](./api.md))。
 
+## 选择性召回:RecallRouter 与 memory-as-a-tool
+
+上面的 `Searcher` 解决"**怎么取**";本节解决"**要不要取、取哪类、取多少**"——召回**时机**。这是精确率的命门,也是 [ADR 0007](../../adr/0007-memory-mechanism-vs-policy-timing.md) 的落点。
+
+> **机制 vs 策略(ADR 0007)**:`Searcher` 是机制(确定的取数能力);"何时召回、召回哪类"是策略(依赖业务与上下文的判断)。**触发决策权在应用层**(它拥有 context);记忆模块提供一个**可插拔的 `RecallRouter`** 作为可复用机制,上层可用、也可自决。
+
+### 为什么不每轮全量召回
+
+一个自然但**错误**的默认是"每轮把所有相关记忆都塞进 context"。证据证伪了它——全量召回从多个机制同时损害精确率:
+
+- **Lost in the Middle**(arXiv 2307.03172):相关信息埋在长上下文中段被忽略。
+- **The Power of Noise**(arXiv 2401.14887):**高分但无关**的近似干扰项**主动降低**生成质量——召回得多 ≠ 召回得好。
+- **Context Rot / attention budget**(Chroma 报告;Anthropic context engineering):上下文是有限注意力预算,越长召回越差。
+
+所以召回必须**选择性、带门控**:目标不是"找全",是"只把真正有用的少量记忆放进有限的注意力预算"——与本模块"高精确率、低噪音"的总取向一致(见 [memory-types](./memory-types.md))。
+
+### RecallRouter:召回前的门控
+
+召回前先回答三件事:**① 这个 query 要不要记忆?② 要哪些 kind?③ 各取多少(top_k)?**
+
+```python
+# modules/memory/retrieval/recall.py(草案,与召回函数同文件)
+from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+
+@dataclass
+class RoutingDecision:
+    should_recall: bool                       # 这一轮要不要召回
+    kinds: list[str] = field(default_factory=list)   # 召回哪些:semantic/episodic/procedural
+    top_k: int = 10                           # 建议取多少
+    reason: str = ""                          # 便于调试/可观测
+
+@runtime_checkable
+class RecallRouter(Protocol):
+    async def route(self, query: str, *, context: dict | None = None) -> RoutingDecision:
+        """决定是否召回、召回哪些 kind、取多少。不做实际检索。"""
+        ...
+```
+
+- **MVP 实现是薄启发式**(`HeuristicRecallRouter`):基于 query 形态的规则——含"我/我的/上次/之前"等指代或偏好询问 → 召回 `semantic`(+ `episodic` 兜底);含"怎么做/如何处理"等任务求解 → 召回 `procedural`;纯寒暄/与用户无关的通用问题 → `should_recall=False`。甚至可配置成"总是召回 semantic"退化为旧行为。
+- **接口先立、实现可薄**:这不是过度设计,而是把"召回是可替换策略"在结构上确立,避免日后把策略硬编码进 `Searcher` 再回头拆(ADR 0007)。将来可换 LLM 判断或训练式分类器(见下方依据)。
+
+```text
+query → RecallRouter.route() → should_recall?
+                                  ├─ 否 → 不检索(省 token、避污染)
+                                  └─ 是 → Searcher.search(kinds, top_k) → 命中
+```
+
+> **MVP 不做训练式分类器**(违背 YAGNI)。门控的学术依据来自自适应检索:Self-RAG(arXiv 2310.11511)、Adaptive-RAG(arXiv 2403.14403,复杂度分类器路由 no/single/multi)、FLARE(arXiv 2305.06983)、UAR(arXiv 2406.12534,四个正交即插即用门控,成本近乎可忽略)。这些是 `RecallRouter` 后续实现的升级路径,MVP 先用规则。
+
+### memory-as-a-tool:面向 agentic 上层的暴露形态
+
+除了"应用层调 router 再检索",还可把**检索本身暴露成一个工具**,交给上层 LLM 自主决定何时调用(MemGPT/Letta、Anthropic memory tool、LangMem self-directed 的主流形态)。
+
+- 它是 `RecallRouter` 的一种**对外封装**,不冲突:工具模式下,"要不要查"由 LLM 在推理中决定(等价于把 routing 交给模型);router 模式下由应用层显式决定。
+- 适配层据此可暴露两种用法(见 [api](./api.md)):**显式 `recall`**(上层自己决定时机)与 **memory 工具**(交 LLM 决定)。模块只提供能力,不强制节奏。
+
 ---
 
 下一篇:[api](./api.md) — 记忆模块对外接口。

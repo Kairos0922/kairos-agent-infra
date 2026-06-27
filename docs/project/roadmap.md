@@ -25,8 +25,8 @@
 - [ ] 共享 `MemoryBase` schema + 三类 kind schema
 - [ ] 统一写入管线(校验→去重→分词→embed→hash→upsert)
 - [ ] 三类记忆的写入/检索/淘汰:semantic、episodic、procedural
-- [ ] 程序记忆:trace schema + distiller(规则门控+LLM 抽取)+ reinforce 回调 + 衰减/容量淘汰
-- [ ] 检索层:向量/BM25 召回 + RRF 融合 + 可选 rerank + 方法路由
+- [ ] 程序记忆:已提炼经验写入口(去重/衰减/检索)+ reinforce 回调 + 衰减/容量淘汰;trace 评估/提炼的**模块外**占位生产者(规则门控 + LLM 抽取,ADR 0008)
+- [ ] 检索层:向量/BM25 召回 + RRF 融合 + 可选 rerank + 方法路由;选择性召回 RecallRouter(薄启发式)+ memory-as-a-tool 暴露(ADR 0007)
 - [ ] 后台维护任务(optimize + TTL 清理 + 衰减)
 - [ ] 适配层:DTO + MemoryAdapter + 错误翻译
 - [ ] 验证 spike:LanceDB FTS OR-mode 实现确认
@@ -46,7 +46,7 @@
 - [x] 底座文档(`foundation/`)
 - [x] 记忆模块文档(`modules/memory/`)
 - [x] benchmark 子项目文档(`modules/benchmark/`)
-- [x] ADR(0001-0005)
+- [x] ADR(0001-0008)
 
 ## 新模块如何接入(通用流程)
 
@@ -90,6 +90,8 @@ flowchart LR
 - **接入上下文模块**(`modules/context/`),按上面的通用流程。**这是验证底座可插拔性的第一个真实案例**:如果接入时需要改动记忆模块或底座核心,说明底座抽象有漏,要回补。
 - 此时评估:记忆和上下文是否共享 embedding/向量库抽象?若是,上提到底座(承接阶段一刻意留下的"暂不上提"决策)。
 - **记忆增强**:自动抽取语义记忆、更精细的融合策略、procedural 自动分段。
+- **trace 评估/提炼 pipeline 成形**(承接 ADR 0008 的"待定形态"):此时定夺是外接 observability 平台(LangSmith/Langfuse/Phoenix)还是规划为独立 Kairos 模块(如 `evaluation`/`experience-forge`),并替换 MVP 的模块外占位生产者。
+- **召回路由升级**:RecallRouter 从薄启发式升级为 LLM/训练式门控(Self-RAG/Adaptive-RAG/UAR 方向)。
 
 ### 阶段三:服务化 + 多租户
 

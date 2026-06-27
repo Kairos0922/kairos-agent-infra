@@ -45,6 +45,19 @@ class WriteRequest(BaseModel):
     metadata: dict = {}              # 各 kind 专有字段
     namespace: str = "default"
 
+class DistilledExperience(BaseModel):
+    """一条**已提炼、已评估**的程序记忆经验。由模块外的评估/提炼 pipeline 产出(ADR 0008),
+    记忆模块只负责去重写入。原始 trace 不进此 DTO,仅以 source_trace_id 回指便于回溯。"""
+    agent_id: str
+    task_type: str
+    situation: str
+    action: str
+    outcome: str
+    success: bool
+    effectiveness: float = 0.5       # 由模块外评估给出的初始有效性
+    source_trace_id: str             # 回指原始 trace(兜底回溯)
+    namespace: str = "default"
+
 class RecallRequest(BaseModel):
     owner_id: str
     query: str
@@ -54,11 +67,14 @@ class RecallRequest(BaseModel):
     use_rerank: bool = False
     filters: dict = {}               # 翻译成 where 条件
     namespace: str = "default"
+    use_router: bool = False         # True:先过 RecallRouter 决定是否/召回哪类(ADR 0007)
 
 class RecallResponse(BaseModel):
     items: list[MemoryItem]
     method: str                      # 实际使用方法(便于调试)
     latency_ms: float
+    routed: bool = False             # 是否经 RecallRouter 门控
+    recalled: bool = True            # router 判定"本轮不召回"时为 False(items 为空)
 ```
 
 ```python
@@ -73,7 +89,13 @@ class MemoryAdapter:
     async def remember(self, req: WriteRequest) -> MemoryItem: ...
 
     # ---- 检索 ----
-    async def recall(self, req: RecallRequest) -> RecallResponse: ...
+    async def recall(self, req: RecallRequest) -> RecallResponse:
+        """检索记忆。**召回时机的决策权在上层**(ADR 0007):
+        - 默认 use_router=False:按 req.kinds 直接检索,由上层自己决定何时调、召回哪类。
+        - use_router=True:先过可插拔的 RecallRouter 门控(是否召回/召回哪类/top_k),
+          判定"本轮不召回"时返回空 items + recalled=False。
+        见 [retrieval §选择性召回](./retrieval.md#选择性召回recallrouter-与-memory-as-a-tool)。"""
+        ...
 
     # ---- 会话生命周期 ----
     async def forget_session(self, session_id: str, *, distill: bool = False) -> None:
@@ -82,13 +104,16 @@ class MemoryAdapter:
         ...
 
     # ---- 程序记忆(procedural) ----
-    async def ingest_trace(self, trace: ExecutionTrace) -> list[MemoryItem]:
-        """提交执行 trace,提炼为程序记忆(规则门控→LLM 抽取→去重写入)。
-        返回提炼出的经验(可能为空)。"""
+    async def write_experience(self, exp: DistilledExperience) -> MemoryItem:
+        """写入一条**已提炼、已评估**的程序记忆经验(去重 → 写入,机制)。
+        注意:trace 的采集/评估/提炼是**记忆模块之外**的独立关注点(ADR 0008)——
+        把原始 trace 评估、提炼成"值得记的经验"由模块外的 pipeline 负责,
+        本接口只接收其产物。MVP 的占位生产者(规则门控 + 单次 LLM 抽取)在模块外。"""
         ...
 
     async def reinforce(self, experience_id: str, *, success: bool) -> None:
-        """程序记忆被复用后的反馈,更新 effectiveness/reuse_count。"""
+        """程序记忆被复用后的反馈记账,更新 effectiveness/reuse_count(机制)。
+        "何时调用"由上层决定(策略)。"""
         ...
 
     # ---- 维护(供后台任务) ----
@@ -96,6 +121,8 @@ class MemoryAdapter:
         """周期性维护:LanceDB optimize() + episodic 归档/衰减 + procedural 衰减。"""
         ...
 ```
+
+> **两种召回暴露形态(ADR 0007)**:上面的 `recall` 是**显式调用**——上层自己决定何时召回。面向 agentic 上层,适配层还可把检索封装成 **memory 工具**(`memory_search` 之类),交给上层 LLM 在推理中自主决定何时查(MemGPT/Letta、Anthropic memory tool、LangMem 的主流形态)。两者是同一检索能力的不同暴露:工具模式把"要不要查"交给模型,`recall(use_router=True)` 交给应用层的 `RecallRouter`。模块只提供能力,不强制节奏。
 
 ## 错误处理契约(对外)
 

@@ -36,10 +36,9 @@ modules/memory/
 ├── retrieval/         # 统一检索层
 │   ├── searcher.py        # 检索编排 + 方法路由
 │   ├── fusion.py          # RRF 等融合(纯计算,同步)
-│   └── recall.py          # 向量/BM25 召回
-└── procedural/        # trace → 程序记忆提炼
-    ├── distiller.py
-    └── trace_schema.py
+│   └── recall.py          # 向量/BM25 召回 + RecallRouter(选择性召回门控)
+# 注:trace 评估/提炼是模块外的独立关注点(ADR 0008),不在本模块;
+#    模块对 procedural 只暴露"写入已提炼经验"。
 ```
 
 ## 模块内的依赖规则
@@ -69,8 +68,8 @@ flowchart LR
 
 | 文档 | 内容 |
 |------|------|
-| [memory-types](./memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰路径;程序记忆从 trace 提炼的流程设计 |
-| [retrieval](./retrieval.md) | 统一检索层(向量/BM25/混合RRF/rerank 流程);embedding/rerank/向量库/tokenizer 可插拔抽象接口签名 |
+| [memory-types](./memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰路径与时机;程序记忆的经验来源(评估/提炼在模块外,ADR 0008) |
+| [retrieval](./retrieval.md) | 统一检索层(向量/BM25/混合RRF/rerank 流程)、选择性召回(RecallRouter + memory-as-a-tool);embedding/rerank/向量库/tokenizer 可插拔抽象接口签名 |
 | [api](./api.md) | 模块对外接口、适配层如何调用、DTO 与领域模型隔离、API 签名草案 |
 | [tradeoffs](./tradeoffs.md) | 记忆相关技术取舍(LanceDB 边界、融合策略、本地vs远程模型)+ 依据来源汇总 |
 | [everos-analysis](./everos-analysis.md) | 参考项目 EverOS 的记忆/检索设计分析:借鉴什么、不同取舍 |
@@ -82,6 +81,8 @@ flowchart LR
 - [ADR 0006](../../adr/0006-memory-classification-by-cognitive-function.md):记忆按认知功能分类(工作记忆归应用层,长期记忆分情景/语义/程序)。
 - [ADR 0004](../../adr/0004-no-knowledge-graph-mvp.md):不做知识图谱,先做原子事实 + LLM 驱动 ADD/UPDATE/DELETE。
 - [ADR 0005](../../adr/0005-decay-ranking-conflict-deletion.md):衰减管排序、冲突管删除,三类记忆分化。
+- [ADR 0007](../../adr/0007-memory-mechanism-vs-policy-timing.md):记忆模块是机制,时机与质量评估是策略;写入分 kind、召回选择性(RecallRouter + memory-as-a-tool)。
+- [ADR 0008](../../adr/0008-procedural-evaluation-decoupling.md):程序记忆的 trace 评估/提炼与记忆模块解耦,模块只收已提炼经验。
 - [benchmark 子项目](../benchmark/README.md):衡量"高精确率、低噪音",是上述取舍的裁判。
 
 ---

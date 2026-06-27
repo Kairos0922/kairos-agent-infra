@@ -45,14 +45,13 @@ kairos-agent-infra/
 │       │       ├── retrieval/     #      统一检索层
 │       │       │   ├── searcher.py
 │       │       │   ├── fusion.py
-│       │       │   └── recall.py
-│       │       └── procedural/    #      trace → 程序记忆提炼
-│       │           ├── distiller.py
-│       │           └── trace_schema.py
-│       │       #   (context/ 等后续模块同构放在 modules/ 下)
+│       │       │   └── recall.py   #      召回函数 + RecallRouter(选择性召回门控)
+│       │       #   (trace 评估/提炼是模块外的独立关注点,见 ADR 0008;
+│       │       #    模块对 procedural 只暴露"写入已提炼经验",不含 distiller)
 │       │
 │       └── adapter/               # ③ 适配层:上层应用调用 infra 的入口
 │           ├── memory_adapter.py
+│           ├── experience_producer.py  # procedural 经验的模块外占位生产者(ADR 0008)
 │           └── dto.py             #    对外 DTO(与领域模型隔离)
 │
 └── tests/
@@ -210,9 +209,9 @@ def span(name: str, **attrs):
     ...
 ```
 
-在关键路径(recall、embed、向量查询、rerank、procedural 提炼)预埋 `with span(...)`。默认关闭,no-op。
+在关键路径(recall、embed、向量查询、rerank)预埋 `with span(...)`。默认关闭,no-op。
 
-> **为什么现在就埋?** 这同时是记忆模块"程序记忆"的数据来源——Agent 的 trace 既用于可观测性,也是 procedural 记忆的原料(见 [memory/memory-types](../modules/memory/memory-types.md))。两者共用一套 trace 抽象,避免重复造轮子。注意:trace 抽象放底座(横切),而"如何把 trace 提炼成经验"是记忆模块的业务逻辑,放模块内——这是横切与业务的分界。
+> **为什么现在就埋?** 这同时是记忆模块"程序记忆"的数据来源——Agent 的 trace 既用于可观测性,也是 procedural 记忆的原料(见 [memory/memory-types](../modules/memory/memory-types.md))。两者共用一套 trace 抽象,避免重复造轮子。**边界(ADR 0008)**:trace 抽象放底座(横切);而"如何把 trace 评估、提炼成经验"是**记忆模块之外的策略**(独立 pipeline,MVP 为模块外占位生产者),**不在记忆模块业务逻辑内**——记忆模块对 procedural 只接收"已提炼经验"。这是横切、模块机制、模块外策略三者的分界。
 
 ## 测试与工程化骨架
 

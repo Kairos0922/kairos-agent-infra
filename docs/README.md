@@ -40,8 +40,8 @@ docs/
 | 文档 | 内容 |
 |------|------|
 | [README](./modules/memory/README.md) | 模块边界、内部结构、依赖规则 |
-| [memory-types](./modules/memory/memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰;程序记忆从 trace 提炼的流程 |
-| [retrieval](./modules/memory/retrieval.md) | 统一检索层(向量/BM25/混合RRF/rerank);embedding/rerank/向量库/tokenizer 可插拔抽象 |
+| [memory-types](./modules/memory/memory-types.md) | 三类记忆的数据模型(LanceDB schema)、写入/检索/淘汰与时机;程序记忆的经验来源(评估/提炼在模块外) |
+| [retrieval](./modules/memory/retrieval.md) | 统一检索层(向量/BM25/混合RRF/rerank)、选择性召回(RecallRouter + memory-as-a-tool);embedding/rerank/向量库/tokenizer 可插拔抽象 |
 | [api](./modules/memory/api.md) | 记忆模块对外接口、适配层如何调用、API 签名草案 |
 | [tradeoffs](./modules/memory/tradeoffs.md) | 记忆相关技术取舍(LanceDB 边界、融合策略、本地vs远程模型)+ 依据来源 |
 | [everos-analysis](./modules/memory/everos-analysis.md) | 参考项目 EverOS 的记忆/检索设计分析:借鉴什么、不同取舍 |
@@ -58,7 +58,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [ADR 索引](./adr/README.md) | 重大技术决策记录(背景/候选/结论/理由/影响)。已含:LanceDB 选型、RRF 融合、抽象归模块、不做知识图谱、衰减/删除分离、记忆按认知功能分类。 |
+| [ADR 索引](./adr/README.md) | 重大技术决策记录(背景/候选/结论/理由/影响)。已含:LanceDB 选型、RRF 融合、抽象归模块、不做知识图谱、衰减/删除分离、记忆按认知功能分类、机制/策略分离与选择性召回、procedural 评估/提炼解耦。 |
 
 ## 阅读顺序建议
 
@@ -85,4 +85,6 @@ docs/
 | **工作记忆 / 上下文内记忆 (in-context)** | context 窗口里的临时内容,归**应用/适配层**(非 infra)。与"上下文模块"不是一回事(后者是阶段二占位、职责未定)。对照常见文献的 in-context vs external memory 二分:Kairos 的记忆模块整体属于 **external memory**,in-context 归应用层。 |
 | **Provider** | 可插拔的外部模型实现(embedding/rerank),通过抽象接口接入。 |
 | **召回 (recall)** | 检索第一步,从某一路(向量或 BM25)取回候选。 |
+| **选择性召回 / RecallRouter** | 召回前先门控"要不要召回、召回哪类、取多少",而非每轮全量——避免上下文污染、保精确率。触发权在应用层,模块提供可插拔的 RecallRouter(MVP 薄启发式)。见 ADR 0007。 |
+| **机制 vs 策略** | 记忆模块只提供**机制**(存/检索/去重/衰减排序);"何时存、何时召回、什么值得记"是**策略**,在模块外(应用/适配层)。见 ADR 0007。 |
 | **融合 (fusion)** | 把多路召回合并成单一排序的策略(本阶段用 RRF)。 |
