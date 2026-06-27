@@ -82,6 +82,7 @@ docs/
 | **底座 (Foundation)** | 所有 infra 模块共享的横切关注点,不含业务逻辑。 |
 | **适配层 (Adapter)** | 把上层应用调用翻译成 infra 接口、屏蔽底层实现的中间层。 |
 | **记忆 kind** | 一类记忆的认知功能类型标识:`semantic`(语义,关于用户的事实/偏好)、`episodic`(情景,发生过的对话/事件)、`procedural`(程序,从执行学到的策略)。工作记忆归应用层。见 ADR 0006。 |
+| **工作记忆 / 上下文内记忆 (in-context)** | context 窗口里的临时内容,归**应用/适配层**(非 infra)。与"上下文模块"不是一回事(后者是阶段二占位、职责未定)。对照常见文献的 in-context vs external memory 二分:Kairos 的记忆模块整体属于 **external memory**,in-context 归应用层。 |
 | **Provider** | 可插拔的外部模型实现(embedding/rerank),通过抽象接口接入。 |
 | **召回 (recall)** | 检索第一步,从某一路(向量或 BM25)取回候选。 |
 | **融合 (fusion)** | 把多路召回合并成单一排序的策略(本阶段用 RRF)。 |
