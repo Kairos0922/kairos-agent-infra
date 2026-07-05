@@ -1,7 +1,7 @@
 # 项目进度 (PROGRESS)
 
 > 本文件是 Kairos 项目**唯一的进度事实源**,由 Code Agent 实时维护。
-> 规则见 [CLAUDE.md](./CLAUDE.md):任务开始标"进行中",完成标"完成"并在变更记录追加一行;新任务/范围变化先报用户批准。
+> 规则见 [AGENTS.md](./AGENTS.md):任务开始标"进行中",完成标"完成"并在变更记录追加一行;新任务/范围变化先报用户批准。
 > 状态图例:`[ ]` 未开始 · `[~]` 进行中 · `[x]` 完成 · `[!]` 阻塞(注明原因)
 
 ## 当前阶段:阶段一 MVP(底座 + 记忆模块 + benchmark)
@@ -79,6 +79,8 @@
 - [x] ADR 0001-0009(LanceDB / RRF / 抽象归模块 / 不做图 / 衰减删除分离 / 认知功能分类 / 机制策略分离与选择性召回 / procedural 评估提炼解耦 / 单多用户作用域与隔离)
 
 ## 变更记录
+
+- 2026-07-05 翻转 CLAUDE.md ↔ AGENTS.md 方向:AGENTS.md 成为唯一事实源(跨工具通用),CLAUDE.md 改为薄引用(`@AGENTS.md`),符合 Anthropic 2025 年 10 月推荐规范。同步更新 README.md 项目结构描述与 PROGRESS.md 引用。
 
 - 2026-06-27 创建 PROGRESS.md;完成设计文档集、项目规范文件、首批 ADR。
 - 2026-06-27 搭建工程化骨架:pyproject.toml(uv 管理)、src/tests 目录、底座 config/errors、记忆模块 contracts 抽象、骨架冒烟测试。验证链全绿(ruff format/lint、mypy strict、import-linter、pytest 覆盖率 100%)。

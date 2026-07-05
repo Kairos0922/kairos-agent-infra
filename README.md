@@ -12,7 +12,7 @@
 
 ## 协作方式
 
-本项目由 Code Agent 100% 执行、用户 100% 决策。所有 Agent 协作规范见 [CLAUDE.md](./CLAUDE.md),核心约定:
+本项目由 Code Agent 100% 执行、用户 100% 决策。所有 Agent 协作规范见 [AGENTS.md](./AGENTS.md),核心约定:
 
 - **改动前先报方案**:任何代码/文档/配置修改,动手前先把方案交用户判断。
 - **任务收尾三同步**:每个任务结束同步更新单元测试、注释、文档,保证三者与实现一致。
@@ -23,8 +23,8 @@
 
 ```
 kairos-agent-infra/
-├── CLAUDE.md          # Agent 协作规范(AGENTS.md 导入此文件)
-├── AGENTS.md          # 空壳,导入 CLAUDE.md
+├── AGENTS.md          # Agent 协作规范(唯一事实源,跨工具通用)
+├── CLAUDE.md          # 薄引用,导入 AGENTS.md
 ├── PROGRESS.md        # 进度事实源
 ├── pyproject.toml     # 依赖与工具配置(待创建)
 ├── src/kairos/        # 源码(待创建):foundation / modules/memory / adapter
