@@ -25,7 +25,9 @@ def test_settings_load_with_defaults() -> None:
     assert settings.vector_store.impl == "lancedb"
     assert settings.embedding.dim == 1024
     assert settings.rerank.enabled is False
-    assert settings.memory.session_ttl_seconds == 24 * 3600
+    assert settings.memory.dedup_threshold == 0.92
+    assert settings.memory.episodic_salience_threshold == 0.5
+    assert settings.memory.recall_router_enabled is False
 
 
 def test_error_hierarchy() -> None:

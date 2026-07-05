@@ -1,124 +1,68 @@
-# 演进路线与交付
+# Roadmap
 
-本文是**项目层**的演进视角:跨模块的交付总览、新模块如何接入、整体路线图、项目级风险。模块内部的交付细节与风险见各模块文档(如 [memory/tradeoffs](../modules/memory/tradeoffs.md))。
+本文是项目层的演进视角:各阶段目标、交付清单与验收标准。
+阶段划分与"零改码扩展"命题的验证路径见 [项目概述](./overview.md),
+分层职责见 [整体架构](./architecture.md)。
 
-## 第一阶段交付总览
+## Phase 1:系统设计(已完成)
 
-第一阶段范围 = **底座 + 记忆模块 + benchmark 子项目**。
+S1–S17 设计演练:六层架构、事件协议、harness 五篇、模块设计
+(memory 四件套经 S10 租户化重审定稿)、assembly 两篇、教育垂直
+场景、纸上演练(S16)通过、ADR 0010–0017 建档。
 
-> **benchmark 是一等子项目,不是附属测试**(经研讨确定)。它衡量"高精确率、低噪音"这个目标,是记忆模块所有设计取舍的裁判。推进策略:**先评测协议 + harness 框架 + 小规模中文种子集打通端到端,记忆模块边实现边用它验证,数据规模后迭代扩充**。详见 [benchmark](../modules/benchmark/README.md)。
+核心产出:**"零改码扩展"命题在设计层面验证通过**——S16 完整
+run 走查未触碰 harness/modules/foundation 任何契约,全部行业
+语义由 Profile + Skill + persona 文案承载。
 
-### 底座(详见 [foundation](../foundation/foundation.md))
+## Phase 2:最小可跑通(目标:个人助手,单租户内验证)
 
-- [ ] 项目目录骨架(`foundation/` + `modules/memory/`)
-- [ ] 配置机制(`KairosSettings`,实现选择走配置,密钥走环境变量)
-- [ ] 统一错误层级(`errors.py`)
-- [ ] 结构化日志 + trace 接入点(no-op 默认)
-- [ ] 统一接口风格约定(同步/异步、错误处理)成文
-- [ ] import-linter 依赖方向规则 + CI
-- [ ] 测试骨架(unit/contracts/integration)
+- foundation:tenancy / config / errors / logging / factory 落地
+- model_gateway:ChatModel(openai_compat)+ tier 路由
+  (仅 strong/fast)+ 基础重试
+- observability:StepSink + TraceQuery 最小实现(SQLite)
+- harness/loop + harness/context:状态机 + 分区组装
+  (压缩 / scope 推断先做最简版本)
+- session-hitl:SessionStore(SQLite)+ 审批流
+- tools:builtin 全集([tools §2](../modules/tools.md))+ Executor
+- memory:契约 + LanceDB provider + 写入管线 + hybrid 检索
+  (承接 Phase 1 设计,见 [memory](../modules/memory/README.md))
+- **里程碑**:memory 召回三模式(proactive/tool/hybrid)A/B 裁决
+  ([eval 挂账任务](../modules/eval.md))跑出结论
+- **验收**:CLI 可完成一次"带记忆的多轮对话"完整 run
 
-### 记忆模块(详见 [modules/memory](../modules/memory/README.md))
+## Phase 3:个人助手可用
 
-- [ ] 模块内抽象:`VectorStore`/`EmbeddingProvider`/`RerankProvider`/`Tokenizer` + 契约测试
-- [ ] 实现:LanceDB store;openai_compat + sentence_transformer embedding;cross_encoder + http_rerank;jieba tokenizer;配置驱动 factory
-- [ ] 共享 `MemoryBase` schema + 三类 kind schema
-- [ ] 统一写入管线(校验→去重→分词→embed→hash→upsert)
-- [ ] 三类记忆的写入/检索/淘汰:semantic、episodic、procedural
-- [ ] 程序记忆:已提炼经验写入口(去重/衰减/检索)+ reinforce 回调 + 衰减/容量淘汰;trace 评估/提炼的**模块外**占位生产者(规则门控 + LLM 抽取,ADR 0008)
-- [ ] 检索层:向量/BM25 召回 + RRF 融合 + 可选 rerank + 方法路由;选择性召回 RecallRouter(薄启发式)+ memory-as-a-tool 暴露(ADR 0007)
-- [ ] 后台维护任务(optimize + TTL 清理 + 衰减)
-- [ ] 适配层:DTO + MemoryAdapter + 错误翻译
-- [ ] 验证 spike:LanceDB FTS OR-mode 实现确认
+- knowledge 模块 + 向量存储上提 foundation 落地(ADR 0015)
+- eval 完整化(CaseSet + 回归基线 + CI 阻断)
+- benchmark 中文种子集打通端到端,作为 memory 专项评测基线
+  (见 [benchmark](../modules/benchmark/README.md))
+- subagent 实现
+- distill 管线(v1,人工触发)
+- **验收**:个人助手日常可用,eval 基线建立
 
-### Benchmark 子项目(详见 [modules/benchmark](../modules/benchmark/README.md))
+## Phase 4:教育行业验证(目标:零改码命题的代码级验证)
 
-- [ ] 评测协议成文(能力分类、Precision@K/abstention/distractor、写入/检索分离、LLM-judge 防坑)
-- [ ] 场景本体 + 用户属性本体(垂直已定:个人助理 + 教育助手;属性本体待细化)
-- [ ] harness 框架代码(喂入记忆 → 检索 → 收集 → 打分,通过记忆模块对外接口)
-- [ ] 小规模中文种子集(几十题,覆盖 IE/MR/KU/TR/ABS 五类)
-- [ ] 记忆模块边实现边用 benchmark 验证(回灌设计取舍:去重阈值、融合权重、是否 rerank、衰减系数)
-- [ ] 数据集迭代扩充
+- assembly 层(Profile/Skill 加载器 + 装配期校验)
+- server 层(认证 / API / SSE / 配额)
+- education Profile 落地(裁剪范围:1 学科 + 4 Skill,
+  不含 MCP / PPT 渲染 / subagent,见 [education](../verticals/education.md))
+- **验收**:上线全程**零修改 harness/modules/foundation 代码**
 
-### 文档(本资产)
+## Phase 5+(按需评估,不预排期)
 
-- [x] 项目层文档(`project/`)
-- [x] 底座文档(`foundation/`)
-- [x] 记忆模块文档(`modules/memory/`)
-- [x] benchmark 子项目文档(`modules/benchmark/`)
-- [x] ADR(0001-0008)
+- MCP 全面接入、PPT 渲染(sandbox)、多学科/多知识包横向扩展
+- tenant 级知识包、行业 APP 客户端对接(独立仓库,
+  唯一耦合面 = REST API + [agent-events 协议](../protocol/agent-events.md))
+- distill 自动化、灰度实验框架
 
-## 新模块如何接入(通用流程)
+## 项目级风险
 
-这是底座设计要保证的核心能力。任何后续 infra 模块(上下文等)都按同一套流程接入,**不动已有模块和底座核心**:
-
-```mermaid
-flowchart TB
-    S1["① 在 modules/<name>/ 建模块目录<br/>(自包含)"]
-    S2["② 写 facade.py + 领域逻辑 + models"]
-    S3["③ 模块内需要外部能力?<br/>在模块内定义抽象 + 实现 + factory"]
-    S4["④ 适配层加对应 DTO + adapter 方法"]
-    S5["⑤ 补契约测试 + 集成测试"]
-    S6{"⑥ 是否与记忆模块<br/>有共享抽象?"}
-    S7["上提到 foundation/<br/>(此时才做,不提前)"]
-    S8["保持在各自模块内"]
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6
-    S6 -->|是,且已被证明| S7
-    S6 -->|否| S8
-```
-
-代码层面的规则(由 import-linter 强制):
-
-1. 模块在 `src/kairos/modules/<name>/`,只依赖 `foundation/` 和自己。
-2. **不**依赖其他业务模块内部、**不**让具体实现(如 `lancedb`)泄漏到领域逻辑。
-3. 需新的外部能力,在**模块内**加抽象 + 实现 + factory。
-4. 适配层加 DTO + adapter 方法。
-
-> **第⑥步是"避免过度设计"的关键决策点。** 只有当上下文模块真的需要、且与记忆模块的抽象**确实重合**时,才把共享抽象上提到底座。在那之前,即使两个模块各有一个 `EmbeddingProvider`,也宁可暂时"重复"也不预先抽象——预先抽象的接口几乎总是猜错。共享是被发现的,不是被预测的。
-
-## 演进路线
-
-```mermaid
-flowchart LR
-    P1["阶段一 MVP<br/>底座 + 记忆模块"] --> P2["阶段二<br/>上下文模块 + 记忆增强"]
-    P2 --> P3["阶段三<br/>服务化 + 多租户"]
-    P3 --> P4["阶段四<br/>高级记忆演进"]
-```
-
-### 阶段二:上下文模块 + 记忆增强
-
-- **接入上下文模块**(`modules/context/`),按上面的通用流程。**这是验证底座可插拔性的第一个真实案例**:如果接入时需要改动记忆模块或底座核心,说明底座抽象有漏,要回补。
-- 此时评估:记忆和上下文是否共享 embedding/向量库抽象?若是,上提到底座(承接阶段一刻意留下的"暂不上提"决策)。
-- **记忆增强**:自动抽取语义记忆、更精细的融合策略、procedural 自动分段。
-- **trace 评估/提炼 pipeline 成形**(承接 ADR 0008 的"待定形态"):此时定夺是外接 observability 平台(LangSmith/Langfuse/Phoenix)还是规划为独立 Kairos 模块(如 `evaluation`/`experience-forge`),并替换 MVP 的模块外占位生产者。
-- **召回路由升级**:RecallRouter 从薄启发式升级为 LLM/训练式门控(Self-RAG/Adaptive-RAG/UAR 方向)。
-
-### 阶段三:服务化 + 多租户
-
-- 适配层包成 HTTP/gRPC 服务(DTO 已 Pydantic 化,路径已铺好,见 [memory/api](../modules/memory/api.md))。
-- 启用 `owner_id`/`namespace` 的完整多租户隔离、鉴权、配额。
-- 评估 LanceDB 多节点/对象存储部署,或按需切换向量库实现(契约测试保障可替换)。
-
-### 阶段四:高级记忆演进
-
-- 记忆合并/反思循环、冲突消解、遗忘曲线。
-- 图记忆 / 知识图谱(若需求出现)。
-- 经验的复杂信用分配与强化。
-
-## 项目级风险与开放问题
-
-模块内的具体技术风险见 [memory/tradeoffs](../modules/memory/tradeoffs.md)。这里只列**跨模块/项目层**的:
-
-| 风险 / 问题 | 等级 | 说明 | 缓解 |
-|------|------|------|------|
-| **底座抽象不足或过度** | 中 | 底座抽象漏了 → 接第二个模块时要改记忆模块;抽象过度 → 违背 YAGNI、增加无谓复杂度 | 阶段二接入上下文模块作为试金石;现在保持底座薄 |
-| **共享抽象上提时机** | 中 | 过早上提是过度设计,过晚上提则两模块重复劳动 | 以"第二个模块确有复用需求"为触发条件,不提前 |
-| **依赖方向腐化** | 中 | 随代码增长,可能出现违规 import(模块横向依赖、实现泄漏) | import-linter 在 CI 强制依赖规则 |
-| **单机容量上限** | 低 | 本阶段单机,数据量/QPS 上限未压测 | 符合 MVP Non-goal;阶段二容量评估 |
-
-### 判断底座是否成功的终极标准
-
-阶段二接入上下文模块时,上面的"通用接入流程"能否走通而**不改动记忆模块和底座核心**。如果能,"高内聚低耦合、可插拔"就从设计文档变成了被验证的事实。
+| 风险 | 等级 | 缓解 |
+|------|------|------|
+| 底座抽象不足或过度 | 中 | S16 纸上演练已做一轮验证;Phase 4 教育落地是代码级试金石,失败即回补设计而非打补丁 |
+| 依赖方向腐化 | 中 | import-linter 三契约在 CI 强制(分层/模块独立/harness 禁触 providers),随包创建逐条激活 |
+| 零改码命题失守 | 高 | 全项目持续验收标准;任何行业需求若需改底座,先回架构文档修契约,再实现 |
+| 单机容量上限 | 低 | Phase 2–4 单机形态是 Non-goal 边界内的选择;量到了再评估 |
 
 ---
 

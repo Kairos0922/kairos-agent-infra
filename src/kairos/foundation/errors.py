@@ -1,6 +1,6 @@
 """统一错误类型层级。
 
-区分"调用方的错"与"服务端的错",便于适配层做错误翻译(见 docs/modules/memory/api.md)。
+区分"调用方的错"与"服务端的错";HTTP 状态码映射由 server 层统一执行(见 docs/modules/memory/api.md)。
 底层依赖(lancedb / openai 等)的原始异常必须在 provider 层封装成 ProviderError,
 不得穿透到上层——否则换实现时上层的 except 会失效,形成隐性耦合。
 """

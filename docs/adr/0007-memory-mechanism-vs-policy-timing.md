@@ -5,6 +5,8 @@
 - **相关文档**:[modules/memory/memory-types.md](../modules/memory/memory-types.md)、[modules/memory/retrieval.md](../modules/memory/retrieval.md)、[modules/memory/api.md](../modules/memory/api.md)
 - **上位关系**:本决策确立一条**贯穿记忆模块的组织原则**(机制/策略分离),[ADR 0008](./0008-procedural-evaluation-decoupling.md) 是它在程序记忆上的直接推论。
 
+> **术语更新(2026-07,六层架构落地后)**:本 ADR 中"策略留在模块外(**应用/适配层**)"的"应用/适配层",在现六层架构([ADR 0014](./0014-six-layer-naming-import-linter.md))中对应 **harness 层**(写入/召回时机由 Context Engine 决定,见 [harness/context.md](../harness/context.md))。原结论不变,仅术语随架构统一。
+
 ## 背景
 
 研讨到"不同记忆**何时存、何时召回**"时,出现一个根本问题:这些时机决策该不该放进记忆模块?

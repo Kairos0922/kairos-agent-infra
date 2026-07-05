@@ -47,11 +47,24 @@ class RerankConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    """记忆模块行为配置。"""
+    """记忆模块行为配置。
 
-    session_ttl_seconds: int = 24 * 3600  # 短期会话记忆生命周期
-    personal_dedup_threshold: float = 0.92  # 个人记忆去重相似度阈值
-    experience_min_trace_len: int = 2  # 提炼经验的最小 trace 步数
+    字段对齐 ADR 0004-0009 与 docs/modules/memory/memory-types.md;
+    procedural 的 trace 提炼/评估门控在模块外(harness/distill,ADR 0008),
+    其参数不在此。
+    """
+
+    # 写入冲突去重:semantic/procedural 的 LLM 驱动 ADD/UPDATE/DELETE 前,
+    # 向量检索 top-K 候选的相似度阈值(ADR 0004/0005)
+    dedup_threshold: float = 0.92
+    # episodic 显著性门控:低于此值的内容不写入(ADR 0006)
+    episodic_salience_threshold: float = 0.5
+    # episodic 归档窗:超过此天数且久未命中的情景记忆批量归档(非硬删,ADR 0005/0006)
+    episodic_archive_after_days: int = 30
+    # procedural 低效淘汰:effectiveness 长期低于此阈值的经验标记 deprecated(ADR 0005)
+    procedural_effectiveness_floor: float = 0.2
+    # 选择性召回:是否默认启用 RecallRouter 门控(ADR 0007;默认关,由 harness 显式开)
+    recall_router_enabled: bool = False
 
 
 class KairosSettings(BaseSettings):

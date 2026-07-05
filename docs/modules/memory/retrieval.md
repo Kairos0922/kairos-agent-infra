@@ -4,7 +4,7 @@
 
 设计目标:**对调用方暴露尽量少的"检索方法",把向量/BM25/融合/rerank 的复杂度全部收进内部。** 直接对应解耦原则——调用方不应被迫理解 RRF 是什么。
 
-> **本文的抽象接口都在记忆模块内**(`modules/memory/contracts/`),不在底座。原因见 [模块 README](./README.md):它们目前只服务记忆模块,按"避免过度设计"不预先上提。
+> **本文的抽象接口都在记忆模块内**(`modules/memory/contracts/`),不在底座。原因见 [模块 README](./README.md):它们目前只服务记忆模块,按"避免过度设计"不预先上提。向量存储契约与 RRF 融合在 Phase 3 出现第二个消费者(knowledge 模块)时上提 foundation(ADR 0015)。
 
 ## 检索能力总览
 
@@ -40,7 +40,7 @@ flowchart TB
 ### 向量召回
 
 - 用 `EmbeddingProvider.embed(query)` 得 query 向量,在 LanceDB `vector` 列做 cosine ANN【已验证】。
-- 应用 `where` 过滤(owner_id、namespace、kind、deprecated=False)作为 **prefilter**(检索前缩小工作集,走标量过滤【已验证】)。
+- 表由 ctx 路由到 `{tenant_id}__{kind}`(ADR 0013),表内应用 `where` 过滤(`owner_id`、`deprecated=False`,及可选 `MetadataFilter` 等值条件)作为 **prefilter**(检索前缩小工作集,走标量过滤【已验证】)。`MetadataFilter` 在此**下推**(过滤后召回),而非召回后过滤——避免 top_k 被无关 scope 占坑。
 
 ### BM25 召回
 
@@ -81,7 +81,7 @@ def reciprocal_rank_fusion(
 
 RRF 不需把量纲不同的 cosine 和 BM25 强行归一化,只看排名,简单鲁棒,且是 LanceDB hybrid 的**默认融合器**【已验证:默认 `RRFReranker()`】,与库默认行为一致。加权融合作**备选**保留在 `weights` 参数;更复杂的 LR 校准融合(EverOS 做法)列为扩展,见 [tradeoffs](./tradeoffs.md)。
 
-> **实现选择**:倾向**应用层自己做双路召回 + RRF**,而非依赖 LanceDB 内置 hybrid API——这样融合逻辑可读、可测、可换,不被库 API 形态绑死(符合"算法在仓库内、透明可改"的取舍)。LanceDB 内置 RRF 作 fallback/对照。
+> **实现选择**:倾向**在模块检索层自己做双路召回 + RRF**,而非依赖 LanceDB 内置 hybrid API——这样融合逻辑可读、可测、可换,不被库 API 形态绑死(符合"算法在仓库内、透明可改"的取舍)。LanceDB 内置 RRF 作 fallback/对照。
 
 ## Rerank(可选,可插拔)
 
@@ -216,7 +216,7 @@ def build_rerank_provider(cfg: RerankConfig) -> RerankProvider:
 
 ## 检索编排接口
 
-把上面拼起来,检索层对记忆 facade 暴露的入口:
+把上面拼起来,检索层对 `store.py`(MemoryStore/Retriever 实现)暴露的入口:
 
 ```python
 # modules/memory/retrieval/searcher.py(草案)
@@ -224,55 +224,58 @@ class Searcher:
     def __init__(self, store: VectorStore, embedder: EmbeddingProvider,
                  tokenizer: Tokenizer, reranker: RerankProvider | None): ...
 
-    async def search(self, *, table: str, query: str, method: str = "hybrid",
-                     scope: "Scope", where: str | None = None, top_k: int = 10,
-                     use_rerank: bool = False) -> list[Hit]:
+    async def search(self, ctx: "TenantContext", *, kind: str, query: str,
+                     method: str = "hybrid", owner_id: str,
+                     metadata_filter: "MetadataFilter | None" = None,
+                     top_k: int = 10, use_rerank: bool = False) -> list[Hit]:
         """统一检索入口。按 method 路由,内部完成召回/融合/rerank。
-        - scope 强制注入 (namespace, owner_id) prefilter(ADR 0009);
-          scope 缺失或无效 → 抛 ValidationError(fail-closed,绝不全量召回)
+        - 表由 ctx 路由到 {tenant_id}__{kind}(ADR 0013,租户物理隔离)
+        - owner_id 强制注入表内 prefilter(ADR 0009);
+          ctx 或 owner_id 缺失/无效 → 抛 ValidationError(fail-closed,绝不全量召回)
+        - metadata_filter 等值条件下推为 prefilter(过滤后召回)
         - use_rerank=True 但 reranker is None → 抛 NotConfiguredError(fail-fast)
         """
         ...
 ```
 
-`Hit` 是检索层内部结果对象(id + score + 原始行),由 facade 转成领域结果,最终由适配层转 DTO(见 [api](./api.md))。
+`Hit` 是检索层内部结果对象(id + score + 原始行),由模块转成 `RecallResponse` DTO(见 [api](./api.md))。
 
 ## 作用域隔离:每次检索必带作用域,缺则拒绝
 
 单用户与多用户**共用一套作用域机制**(单用户是多用户的退化情形,见 [ADR 0009](../../adr/0009-single-multi-user-scoping-isolation.md))。隔离是**机制、安全底线**(不是策略):用户 A 永远不能在检索里看到用户 B 的记忆。
 
-> **两个正交作用域轴(复用现有字段)**:`namespace`(租户/组织硬边界,单用户=`default`)+ `owner_id`(实体归属:user 或 agent)。`tags` 是自由维度,**不参与隔离**。
+> **两条正交作用域轴,物理实现分工(ADR 0013)**:**租户轴**由物理分表 `{tenant_id}__{kind}` 承载(越权需拿错表名),**用户轴**由表内 `owner_id` 字段过滤。二者都从 `ctx: TenantContext` 派生——server 认证中间件是其唯一构造点。`metadata_kv`(scope)是业务过滤维度,**不参与隔离**。
 
 ### 三条硬规则
 
-1. **强制 prefilter**:检索在 `Searcher`/facade 层**强制**注入 `(namespace, owner_id)` 过滤,作为 LanceDB `where(...)` **pre-filter**(检索前缩小工作集,既保 top-k 数量又防跨 owner 泄漏;在 owner 字段建索引时还能加速)。
-2. **fail-closed(默认拒绝)**:`scope` 缺失或无效时**抛 `ValidationError`,绝不返回全量**。"绝不无作用域查询"是铁律——跨租户泄漏的根因业界概括为"一个缺失的过滤器"。
-3. **作用域从可信上下文派生**:`namespace`/`owner_id` 由上层从**可信会话上下文**给出,检索层**不信任调用方自报的越权标识**。隔离断言落在确定性的检索层,不依赖 LLM(依赖 LLM 做访问控制是反模式)。
+1. **强制注入**:租户经 ctx 路由到对应物理表;检索层**强制**注入 `owner_id` 过滤作为 LanceDB `where(...)` **pre-filter**(检索前缩小工作集,既保 top-k 数量又防跨 owner 泄漏;在 owner 字段建索引时还能加速)。过滤在 provider 内部注入,调用方无法绕过。
+2. **fail-closed(默认拒绝)**:`ctx` 或 `owner_id` 缺失/无效时**抛 `ValidationError`,绝不返回全量**。"绝不无作用域查询"是铁律——跨租户泄漏的根因业界概括为"一个缺失的过滤器"。
+3. **作用域从可信上下文派生**:租户表名与 `owner_id` 由上层从**可信 `ctx`** 给出,检索层**不信任调用方自报的越权标识**。隔离断言落在确定性的检索层,不依赖 LLM(依赖 LLM 做访问控制是反模式)。
 
 ```python
-# modules/memory/retrieval/searcher.py(草案,作用域对象)
-from dataclasses import dataclass
+# modules/memory/providers/vector/lancedb_store.py(草案,表路由 + owner 过滤)
+def _resolve_table(ctx: TenantContext, kind: str) -> str:
+    """租户物理分表路由(ADR 0013)。ctx 为空在上游已 fail-closed。"""
+    return f"{ctx.tenant_id}__{kind}"
 
-@dataclass(frozen=True)
-class Scope:
-    namespace: str            # 租户/组织硬边界(单用户=default)
-    owner_id: str             # 实体归属(user 或 agent),必填非空
-
-    def to_where(self) -> str:
-        """渲染成强制 prefilter 片段;与调用方业务 where 以 AND 合并。"""
-        # namespace/owner_id 均非空由构造校验保证;为空在上游已 fail-closed
-        return f"namespace = '{self.namespace}' AND owner_id = '{self.owner_id}'"
+def _owner_prefilter(owner_id: str, extra: str | None) -> str:
+    """强制 owner 过滤;与业务 metadata_filter 以 AND 合并。"""
+    # owner_id 非空由上游校验保证;为空则 fail-closed 抛 ValidationError
+    base = f"owner_id = '{owner_id}' AND deprecated = false"
+    return f"{base} AND ({extra})" if extra else base
 ```
 
-> **为什么作用域不当成普通 `where` 任由调用方传?** 普通 `filters` 是"业务过滤"(可有可无、可错);作用域是"安全过滤"(必须有、不可绕过)。把它独立成 `Scope` 强制参数,就杜绝了"某条检索路径忘了加过滤"这个最常见的泄漏通道。这条对应 OWASP LLM02(敏感信息泄露)/ LLM08(向量嵌入弱点),并直接转成契约测试(见 [foundation](../../foundation/foundation.md)):注入 A、B 两 owner,断言"A 的查询永不返回 B 的记录""缺作用域时拒绝而非返回全量"。
+> **为什么租户用分表、用户用过滤,而不是都用过滤?**(ADR 0013)租户是信任边界与合规边界——物理分表让"越权"需要拿到错误的表名(纯逻辑过滤则一处 bug 即跨租户泄漏),且 drop 表即完成合规数据删除。用户轴在租户表内,量大、增删频繁,用 `owner_id` 逻辑过滤成本最低。两轴强度匹配各自的边界性质。
 
-> **三类记忆的 owner 语义**:episodic/semantic 严格私有(`owner_id=user_id`);procedural 的 owner 是**显式二选一**(私有 `f(agent_id,user_id)` / 全局技能 `agent_id`),本阶段**只实现私有路径**,全局共享依赖模块外脱敏 pipeline(ADR 0008),留接口位。详见 [memory-types](./memory-types.md)。
+> **为什么 owner 过滤不当成普通业务 `where` 任由调用方传?** 普通 `metadata_filter` 是"业务过滤"(可有可无、可错);owner 是"安全过滤"(必须有、不可绕过)。把它在 provider 内部强制注入,就杜绝了"某条检索路径忘了加过滤"这个最常见的泄漏通道。这条对应 OWASP LLM02(敏感信息泄露)/ LLM08(向量嵌入弱点),并直接转成**契约测试**(见 [foundation](../../foundation/foundation.md))隔离三连:① 租户 A 写入 → 租户 B 任意检索(向量/关键词/filter 全开)不可见;② 同租户 user1 写入 → user2 不可见;③ drop 租户 A 表 → 租户 B 完好。
+
+> **三类记忆的 owner 语义**:episodic/semantic 严格私有(`owner_id=user_id`);procedural 的 owner 是**显式二选一**(私有 `f(agent_id,user_id)` / 全局技能 `agent_id`),本阶段**只实现私有路径**,全局共享依赖 harness/distill 脱敏(ADR 0008),留接口位。详见 [memory-types](./memory-types.md)。
 
 ## 选择性召回:RecallRouter 与 memory-as-a-tool
 
 上面的 `Searcher` 解决"**怎么取**";本节解决"**要不要取、取哪类、取多少**"——召回**时机**。这是精确率的命门,也是 [ADR 0007](../../adr/0007-memory-mechanism-vs-policy-timing.md) 的落点。
 
-> **机制 vs 策略(ADR 0007)**:`Searcher` 是机制(确定的取数能力);"何时召回、召回哪类"是策略(依赖业务与上下文的判断)。**触发决策权在应用层**(它拥有 context);记忆模块提供一个**可插拔的 `RecallRouter`** 作为可复用机制,上层可用、也可自决。
+> **机制 vs 策略(ADR 0007)**:`Searcher` 是机制(确定的取数能力);"何时召回、召回哪类"是策略(依赖业务与上下文的判断)。**触发决策权在 harness 层**(它拥有 context);记忆模块提供一个**可插拔的 `RecallRouter`** 作为可复用机制,harness 可用、也可自决。
 
 ### 为什么不每轮全量召回
 
@@ -320,10 +323,10 @@ query → RecallRouter.route() → should_recall?
 
 ### memory-as-a-tool:面向 agentic 上层的暴露形态
 
-除了"应用层调 router 再检索",还可把**检索本身暴露成一个工具**,交给上层 LLM 自主决定何时调用(MemGPT/Letta、Anthropic memory tool、LangMem self-directed 的主流形态)。
+除了"harness 调 router 再检索",还可把**检索本身暴露成一个工具**(tools builtin `search_memory`),交给上层 LLM 自主决定何时调用(MemGPT/Letta、Anthropic memory tool、LangMem self-directed 的主流形态)。
 
-- 它是 `RecallRouter` 的一种**对外封装**,不冲突:工具模式下,"要不要查"由 LLM 在推理中决定(等价于把 routing 交给模型);router 模式下由应用层显式决定。
-- 适配层据此可暴露两种用法(见 [api](./api.md)):**显式 `recall`**(上层自己决定时机)与 **memory 工具**(交 LLM 决定)。模块只提供能力,不强制节奏。
+- 它是 `RecallRouter` 的一种**对外封装**,不冲突:工具模式下,"要不要查"由 LLM 在推理中决定(等价于把 routing 交给模型);proactive 模式下由 Context Engine 显式决定。
+- 据此对外暴露两种用法(见 [api §双召回路径](./api.md)):**proactive**(Context Engine P5 主动注入)与 **tool**(交 LLM 决定)。模块只提供能力,不强制节奏。
 
 ---
 

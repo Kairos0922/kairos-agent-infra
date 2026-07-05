@@ -1,180 +1,205 @@
 # 记忆模块对外接口
 
-本文定义**适配层如何调用记忆模块**,以及对外暴露的 API 签名。核心约束:上层应用只通过适配层、只见 DTO,永远不碰记忆模块的领域模型。
+本文定义记忆模块对外暴露的契约与 DTO。核心约束(六层架构下):
+**消费方是 harness 层**(Context Engine 的主动召回/写回、tools 的
+`search_memory`/`save_memory`、distill 管线),经模块 `contracts/`
+抽象消费,实现由组装根(composition root)注入;领域模型与存储
+schema 永不外泄。
 
 ## 调用关系
 
 ```mermaid
 flowchart LR
-    App["上层 Agent"] -->|"业务调用 + DTO"| Ad["适配层<br/>MemoryAdapter"]
-    Ad -->|"RecallRequest / WriteRequest"| Fac["记忆 Facade"]
-    Fac -->|领域模型| Core["记忆领域逻辑 + 检索层"]
+    CE["harness/context<br/>(P5 主动召回 + run 后写回)"] -->|"ctx + Request/Result"| C["memory contracts<br/>(MemoryStore / Retriever)"]
+    TL["tools builtin<br/>(search_memory / save_memory)"] -->|"ctx 透传"| C
+    DI["harness/distill<br/>(procedural 唯一生产者)"] -->|"ctx + DistilledExperience"| C
+    C -->|领域模型| Core["记忆领域逻辑 + 检索层<br/>(模块内部)"]
 ```
 
-三个边界对象,层层翻译:
+三层对象,层层翻译:
 
 | 对象 | 在哪层 | 谁能看见 | 作用 |
 |------|--------|---------|------|
-| **DTO**(`adapter/dto.py`) | 适配层对外 | 上层应用 | 稳定对外契约,与内部解耦 |
-| **Request/Result**(`facade.py` 入出参) | 适配层 ↔ Facade | 适配层 | 模块的稳定接口 |
-| **领域模型**(`modules/memory/models.py`) | 记忆模块内部 | 仅记忆模块 | 领域逻辑 + LanceDB schema |
+| **Request/Result DTO**(`contracts/`) | 模块对外 | harness | 稳定对外契约,Pydantic v2,禁裸 dict 跨层 |
+| **领域模型**(`models.py`) | 模块内部 | 仅记忆模块 | 领域逻辑 |
+| **存储 schema**(providers 内) | provider 内部 | 仅 provider | LanceDB 表结构 |
 
-> **为什么要三层对象、显式翻译?** 它把"对外契约""模块接口""存储 schema"三件事解耦了。存储 schema 改字段(procedural 加列)不影响对外 API;对外 API 调整不影响 LanceDB 表结构。每层独立演进——这是"项目资产"长期可维护的关键。代价是多写转换代码,用 Pydantic `model_validate` / 简单 mapper 把成本压到最低。
+> **为什么三层对象、显式翻译?** 它把"对外契约""领域逻辑""存储
+> schema"三件事解耦:存储改字段不影响对外 API,对外 API 调整
+> 不影响表结构,每层独立演进。代价是多写转换代码,用 Pydantic
+> `model_validate` / 简单 mapper 把成本压到最低。
 
-## 适配层 API(本阶段:进程内 Python API)
+## 租户上下文:ctx 首参(ADR 0012)
 
-本阶段适配层是**进程内 Python 库**(非 HTTP 服务,见 [project/overview](../../project/overview.md) Non-goals)。上层直接 import、`await` 调用。
+**所有读写/检索/淘汰接口签名首参 `ctx: TenantContext`。**
+ctx 只能来自 server 认证中间件(TenantContext 的唯一构造点,
+见 [architecture §3](../../project/architecture.md)),模块内不构造、
+不信任任何调用方自报的租户标识。
+
+**DTO 零租户字段**:`MemoryItem` 与所有 Request/Result 中
+**不得出现** tenant_id / user_id 字段——隔离是调用上下文,
+不是业务数据;字段存在本身就是越权构造的通道。
+
+## 对外契约与 DTO
 
 ```python
-# adapter/dto.py(对外 DTO 草案)
+# modules/memory/contracts/(草案)
+from enum import StrEnum
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Protocol
+
+class MemorySource(StrEnum):
+    """写入来源(写入矩阵三路径,支撑幂等去重与按来源回滚)。"""
+    RUN_EXTRACT = "run_extract"        # Context Engine run 后异步抽取
+    AGENT_EXPLICIT = "agent_explicit"  # save_memory 工具(用户显式"记住")
+    DISTILL = "distill"                # distill 管线(procedural 唯一来源)
 
 class MemoryItem(BaseModel):
-    """对外的记忆条目表示,屏蔽内部 schema 细节。"""
+    """对外的记忆条目表示,屏蔽内部 schema 细节。
+    id / kind / created_at 必带:Context Engine 的 id 级去重
+    与"冲突时新者优先"依赖它们(见 harness/context.md §2.1)。"""
     id: str
     kind: Literal["semantic", "episodic", "procedural"]
     text: str
+    created_at: float
     score: float | None = None       # 仅检索返回时有
-    metadata: dict = {}              # category/task_type/effectiveness 等
+    metadata: dict[str, str] = {}    # scope(class/subject/term)等通用元数据
 
 class WriteRequest(BaseModel):
     kind: Literal["semantic", "episodic", "procedural"]
-    owner_id: str                    # 强制作用域:user_id / agent_id,非空(ADR 0009)
     text: str
-    metadata: dict = {}              # 各 kind 专有字段
-    namespace: str = "default"       # 强制作用域:租户/组织硬边界(单用户=default)
+    source: MemorySource
+    source_run_ids: list[str] = []   # 来源 run(幂等去重键的一部分)
+    metadata: dict[str, str] = {}    # scope 推断结果等(context.md §5.1)
 
 class DistilledExperience(BaseModel):
-    """一条**已提炼、已评估**的程序记忆经验。由模块外的评估/提炼 pipeline 产出(ADR 0008),
-    记忆模块只负责去重写入。原始 trace 不进此 DTO,仅以 source_trace_id 回指便于回溯。"""
-    agent_id: str
+    """一条**已提炼、已评估**的程序记忆经验。由 harness/distill
+    管线产出(ADR 0008),记忆模块只负责去重/合并写入。"""
     task_type: str
-    situation: str
-    action: str
+    situation: str                   # 适用情境描述(检索主要匹配它)
+    action: str                      # 策略内容
     outcome: str
     success: bool
-    effectiveness: float = 0.5       # 由模块外评估给出的初始有效性
-    source_trace_id: str             # 回指原始 trace(兜底回溯)
-    namespace: str = "default"
+    effectiveness: float = 0.5
+    source_run_ids: list[str]        # 来源 run 集合(查重合并时并集)
+    metadata: dict[str, str] = {}
+
+class MetadataFilter(BaseModel):
+    """v1 只做**等值匹配**的最小过滤 DSL,如
+    {"class": "高二3班", "subject": "物理"};范围/复合查询暂缓。
+    在召回阶段下推到存储层 prefilter(见 retrieval.md)。"""
+    equals: dict[str, str] = {}
 
 class RecallRequest(BaseModel):
-    owner_id: str                    # 强制作用域:实体归属(user/agent),非空(ADR 0009)
     query: str
     kinds: list[Literal["semantic", "episodic", "procedural"]] = ["semantic"]
     method: Literal["vector", "keyword", "hybrid"] = "hybrid"
     top_k: int = 10
     use_rerank: bool = False
-    filters: dict = {}               # 业务过滤(可选);与作用域 prefilter 以 AND 合并
-    namespace: str = "default"       # 强制作用域:租户/组织硬边界(单用户=default)
-    use_router: bool = False         # True:先过 RecallRouter 决定是否/召回哪类(ADR 0007)
+    filter: MetadataFilter | None = None
 
 class RecallResponse(BaseModel):
-    items: list[MemoryItem]
+    items: list[MemoryItem]          # 平铺列表,每条带 kind(分组是渲染职责)
     method: str                      # 实际使用方法(便于调试)
     latency_ms: float
-    routed: bool = False             # 是否经 RecallRouter 门控
-    recalled: bool = True            # router 判定"本轮不召回"时为 False(items 为空)
 ```
 
 ```python
-# adapter/memory_adapter.py(适配层 API 草案)
-class MemoryAdapter:
-    def __init__(self, settings: KairosSettings):
-        """从配置组装:factory 建 Provider/Store,注入记忆 Facade。
-        组件不齐时 fail-fast(ConfigError/NotConfiguredError)。"""
-        ...
+# modules/memory/contracts/(接口草案)
+class MemoryStore(Protocol):
+    async def remember(self, ctx: TenantContext, req: WriteRequest) -> MemoryItem:
+        """统一写入。ctx 只能来自 server 认证中间件,模块内不构造。
+        幂等:同 (source, source_run_ids, 内容哈希) 重复写入不产生新条目。"""
 
-    # ---- 写入 ----
-    async def remember(self, req: WriteRequest) -> MemoryItem: ...
+    async def write_experience(self, ctx: TenantContext,
+                               exp: DistilledExperience) -> MemoryItem:
+        """写入已提炼经验(procedural 唯一入口,仅 distill 调用)。
+        查重合并:situation 相似的既有经验合并计数递增、
+        source_run_ids 取并集,不新增条目。"""
 
-    # ---- 检索 ----
-    async def recall(self, req: RecallRequest) -> RecallResponse:
-        """检索记忆。**召回时机的决策权在上层**(ADR 0007):
-        - 默认 use_router=False:按 req.kinds 直接检索,由上层自己决定何时调、召回哪类。
-        - use_router=True:先过可插拔的 RecallRouter 门控(是否召回/召回哪类/top_k),
-          判定"本轮不召回"时返回空 items + recalled=False。
-        见 [retrieval §选择性召回](./retrieval.md#选择性召回recallrouter-与-memory-as-a-tool)。"""
-        ...
+    async def reinforce(self, ctx: TenantContext, experience_id: str,
+                        *, success: bool) -> None:
+        """程序记忆复用反馈记账,更新 effectiveness/reuse_count(机制);
+        何时调用由 harness 决定(策略)。"""
 
-    # ---- 会话生命周期 ----
-    async def forget_session(self, session_id: str, *, distill: bool = False) -> None:
-        """遗忘某次会话的情景记忆(episodic);distill=True 时先尝试沉淀为 semantic。
-        注意:工作记忆(context 压缩)归应用层,不在此清理。"""
-        ...
+    async def forget_session(self, ctx: TenantContext, session_id: str) -> None:
+        """遗忘某会话的 episodic 记忆(用户遗忘请求)。"""
 
-    # ---- 程序记忆(procedural) ----
-    async def write_experience(self, exp: DistilledExperience) -> MemoryItem:
-        """写入一条**已提炼、已评估**的程序记忆经验(去重 → 写入,机制)。
-        注意:trace 的采集/评估/提炼是**记忆模块之外**的独立关注点(ADR 0008)——
-        把原始 trace 评估、提炼成"值得记的经验"由模块外的 pipeline 负责,
-        本接口只接收其产物。MVP 的占位生产者(规则门控 + 单次 LLM 抽取)在模块外。"""
-        ...
+    async def maintain(self, ctx: TenantContext) -> None:
+        """周期维护:optimize + episodic 归档/衰减 + procedural 衰减。
+        按 namespace(租户表)独立执行,不跨租户竞争。"""
 
-    async def reinforce(self, experience_id: str, *, success: bool) -> None:
-        """程序记忆被复用后的反馈记账,更新 effectiveness/reuse_count(机制)。
-        "何时调用"由上层决定(策略)。"""
-        ...
-
-    # ---- 维护(供后台任务) ----
-    async def maintain(self) -> None:
-        """周期性维护:LanceDB optimize() + episodic 归档/衰减 + procedural 衰减。"""
-        ...
+class Retriever(Protocol):
+    async def recall(self, ctx: TenantContext, req: RecallRequest) -> RecallResponse:
+        """统一检索。作用域从 ctx 派生并强制注入(fail-closed),
+        绝不接受请求体里的租户标识。"""
 ```
 
-> **两种召回暴露形态(ADR 0007)**:上面的 `recall` 是**显式调用**——上层自己决定何时召回。面向 agentic 上层,适配层还可把检索封装成 **memory 工具**(`memory_search` 之类),交给上层 LLM 在推理中自主决定何时查(MemGPT/Letta、Anthropic memory tool、LangMem 的主流形态)。两者是同一检索能力的不同暴露:工具模式把"要不要查"交给模型,`recall(use_router=True)` 交给应用层的 `RecallRouter`。模块只提供能力,不强制节奏。
+### 双召回路径:消费方说明(接口不分叉)
+
+同一个 `Retriever` 契约服务两条召回路径,**均由 harness 消费**,
+模块无接口差异:
+
+| 路径 | 消费方 | 时机决策者 |
+|------|--------|-----------|
+| **proactive(主动注入)** | Context Engine P5 分区(新用户消息时检索一次) | harness(Profile 的 `memory_recall` 策略) |
+| **tool(模型自主)** | tools builtin `search_memory` → 内部调 Retriever,ctx 透传 | 模型在推理中决定 |
+
+默认模式 hybrid(两路都开);三模式(proactive/tool/hybrid)的
+A/B 裁决是 Phase 2 末尾的 [eval 挂账任务](../eval.md)。
+模块内保留可插拔 `RecallRouter`(薄启发式门控,见
+[retrieval §选择性召回](./retrieval.md#选择性召回recallrouter-与-memory-as-a-tool))
+供 proactive 路径复用——机制在内,策略在外(ADR 0007)。
+
+### 配额责任归属(写清,避免两边都做或都不做)
+
+- **调用方(harness/distill)传入或配置约束**:per-run 写回上限
+  (默认 10,context.md §5)、distill 每租户每日上限(默认 5,
+  distill.md)。
+- **模块执行最终裁决**:写入管线里做幂等去重与上限拒绝
+  (超限返回明确错误,不静默丢弃)。
+- 一句话:**上限的"值"来自调用方策略,上限的"执行"在模块内**。
 
 ## 错误处理契约(对外)
 
-适配层是错误的"翻译边界",把内部错误映射成对调用方有意义的形式(错误层级定义见 [foundation](../../foundation/foundation.md)):
-
-| 内部错误 | 适配层处理 | 对调用方含义 | 未来 HTTP 映射 |
-|---------|-----------|-------------|---------------|
-| `ValidationError` | 直接抛(或转友好提示) | 你的输入有问题 | 422 |
+| 内部错误 | 处理 | 对调用方含义 | server 层 HTTP 映射 |
+|---------|-----|-------------|------------------|
+| `ValidationError` | 直接抛 | 你的输入有问题 | 422 |
 | `NotConfiguredError` | 直接抛,带配置指引 | 服务没配好这能力 | 500(配置) |
 | `ProviderError` | 记录 + 抛 | 外部依赖出错,可重试 | 502/503 |
 | `ConfigError` | 启动时抛,fail-fast | 部署配置错误 | 启动失败 |
 
-约定:底层 `lancedb`/`openai` 原始异常**绝不**穿透到上层——全在 provider 层封装成 `ProviderError`,否则上层会写出依赖具体实现的 except,破坏可插拔。输入校验由 DTO(Pydantic)+ 适配层完成。
+约定:底层 `lancedb`/`openai` 原始异常**绝不**穿透——全在
+provider 层封装成 `ProviderError`(既定铁律,见
+[foundation](../../foundation/foundation.md))。HTTP 映射由
+server 层统一执行,模块只抛类型化错误。
 
-> **作用域强制(ADR 0009)**:`owner_id`/`namespace` 是**强制作用域**,不是普通业务过滤。`owner_id` 缺失/空 → DTO 校验即抛 `ValidationError`;检索层再做一次 fail-closed 兜底(无有效作用域**拒绝查询,绝不返回全量**)。作用域应由上层从**可信会话上下文**派生注入,适配层不信任调用方自报的越权 `owner_id`/`namespace`。这条对应 OWASP LLM02/LLM08,并落为契约测试(注入 A、B 两 owner,断言互不可见)——见 [foundation](../../foundation/foundation.md)、[retrieval §作用域隔离](./retrieval.md#作用域隔离每次检索必带作用域缺则拒绝)。
+> **作用域强制(ADR 0009/0013)**:租户隔离由 provider 层
+> **物理分表路由**(`{tenant_id}__{kind}`)+ 表内 `owner_id`
+> 强制过滤实现,过滤在 provider 内部注入,调用方无法绕过;
+> ctx 缺失/无效 → fail-closed 抛 `ValidationError`,绝不返回全量。
+> 落为契约测试(隔离三连,见 [retrieval §作用域隔离](./retrieval.md#作用域隔离每次检索必带作用域缺则拒绝))。
 
-## 端到端使用示例(上层视角)
+## 端到端使用示例(harness 视角)
 
 ```python
-from kairos.foundation.config import KairosSettings
-from kairos.adapter import MemoryAdapter
-from kairos.adapter.dto import WriteRequest, RecallRequest
-
-mem = MemoryAdapter(KairosSettings())   # 配置驱动,自动组装实现
-
-# 写一条关于用户的长期偏好(语义记忆)
-await mem.remember(WriteRequest(
-    kind="semantic", owner_id="user_42",
-    text="偏好简洁、直接的回答,不要冗长铺垫",
-    metadata={"category": "preference"},
+# harness/context 内(示意):P5 主动召回
+resp = await retriever.recall(ctx, RecallRequest(
+    query=user_message, kinds=["semantic", "episodic"],
+    filter=MetadataFilter(equals=session_scope) if session_scope else None,
 ))
 
-# 在对话中检索相关记忆
-resp = await mem.recall(RecallRequest(
-    owner_id="user_42", query="我喜欢什么样的回答风格?",
-    kinds=["semantic"], method="hybrid", top_k=5,
+# run 结束后写回(context.md §5):
+await store.remember(ctx, WriteRequest(
+    kind="semantic", text="所带班级力学基础薄弱",
+    source=MemorySource.RUN_EXTRACT, source_run_ids=[run_id],
+    metadata={"subject": "物理"},   # scope 推断,宁缺不误标(§5.1)
 ))
-for item in resp.items:
-    print(item.score, item.text)
 ```
 
-上层代码里**没有任何** `lancedb`、`openai`、RRF、embedding 维度的痕迹——全在 infra 内部。换向量库、换模型、改融合策略,这段上层代码一行不动。这就是解耦要达到的效果。
-
-## 服务化演进(预留,不实现)
-
-适配层是天然的服务化边界。未来若需 HTTP API:
-
-- 用 FastAPI 把 `MemoryAdapter` 方法包成路由(`POST /v1/memory/recall` 等),DTO 直接复用为请求/响应体(已是 Pydantic 模型)。
-- 上面错误映射表的"HTTP 映射"列直接生效。
-- 对外 API 签名(DTO)不变,上层从"import 库"改为"发 HTTP 请求",业务语义一致。
-
-本阶段不实现,但 DTO 用 Pydantic、错误已预映射,就是为这条路径铺好的路。整体演进见 [project/roadmap](../../project/roadmap.md)。
+harness 代码里**没有任何** `lancedb`、embedding 维度、RRF、
+表名路由的痕迹——全在模块 providers 内部。换向量库、换模型、
+改融合策略,harness 一行不动。
 
 ---
 

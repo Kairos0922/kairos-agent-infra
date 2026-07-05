@@ -1,7 +1,7 @@
 [project]
 name = "kairos-agent-infra"
 version = "0.1.0"
-description = "解耦的 Agent 基础设施:记忆、上下文等模块独立演进、可插拔"
+description = "解耦的 Agent 基础设施:六层架构,模块独立演进、可插拔"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -77,42 +77,61 @@ source = ["src/kairos"]
 branch = true
 
 [tool.coverage.report]
-# 核心模块覆盖率门槛见 CLAUDE.md(≥80%);此处为全局兜底,CI 中对核心模块单独把关
+# 核心模块覆盖率门槛见 AGENTS.md(>=80%);此处为全局兜底,CI 中对核心模块单独把关
 show_missing = true
 
 # ---------------------------------------------------------------------------
-# Import Linter:把架构纪律(依赖方向)写成可检查的契约
-# 规则依据 docs/foundation/foundation.md 与 docs/project/architecture.md
+# Import Linter:把架构纪律(六层依赖方向)写成可检查的契约(ADR 0014)
+# 规则依据 docs/project/architecture.md 与 docs/foundation/foundation.md
 #
-# 注:契约的 source_modules 必须是已存在的包,否则 lint-imports 报错。
-# 因此按 "grow by task" 原则:包被创建时,同步激活对应契约(取消下方注释)。
+# 注:契约的 modules 必须是已存在的包,否则 lint-imports 报错。
+# 按 "grow by task" 原则:包被创建时,同步激活/扩充对应契约。
 # ---------------------------------------------------------------------------
 [tool.importlinter]
 root_package = "kairos"
 
+# 契约一:六层严格分层,依赖单向向下(下层不知上层)
 [[tool.importlinter.contracts]]
-name = "底座不依赖任何模块或适配层"
-type = "forbidden"
-source_modules = ["kairos.foundation"]
-forbidden_modules = ["kairos.modules", "kairos.adapter"]
+name = "六层分层依赖单向"
+type = "layers"
+layers = [
+    "kairos.cli",
+    "kairos.server",
+    "kairos.assembly",
+    "kairos.harness",
+    "kairos.modules",
+    "kairos.foundation",
+]
 
-# 待 kinds/retrieval/experience 包创建后激活:
+# 契约二:L1 模块间零依赖(随新模块创建扩充本列表)
+[[tool.importlinter.contracts]]
+name = "L1 infra 模块互相独立"
+type = "independence"
+modules = [
+    "kairos.modules.memory",
+    # 新模块创建时加入:model_gateway / tools / knowledge / observability / eval
+]
+
+# 契约三:harness 只依赖各模块 contracts,禁止触碰 providers
+# 待 providers 包创建后激活(Phase 2):
+# [[tool.importlinter.contracts]]
+# name = "harness 不依赖具体实现(providers)"
+# type = "forbidden"
+# source_modules = ["kairos.harness"]
+# forbidden_modules = [
+#     "kairos.modules.memory.providers",
+# ]
+
+# 待 store/kinds/retrieval 包创建后激活(Phase 2):
 # [[tool.importlinter.contracts]]
 # name = "记忆领域逻辑不依赖具体实现(providers)与第三方存储库"
 # type = "forbidden"
 # source_modules = [
+#     "kairos.modules.memory.store",
 #     "kairos.modules.memory.kinds",
 #     "kairos.modules.memory.retrieval",
-#     "kairos.modules.memory.experience",
 # ]
 # forbidden_modules = [
 #     "kairos.modules.memory.providers",
 #     "lancedb",
 # ]
-
-# 待 providers 包创建后激活:
-# [[tool.importlinter.contracts]]
-# name = "适配层只依赖模块 facade,不碰模块内部实现"
-# type = "forbidden"
-# source_modules = ["kairos.adapter"]
-# forbidden_modules = ["kairos.modules.memory.providers"]

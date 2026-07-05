@@ -1,132 +1,100 @@
-# 整体架构
+# Kairos 整体架构
 
-## 三层架构与职责边界
+## 1. 分层总览
 
-Kairos 采用三层架构,每层职责单一、边界清晰:
+L5 客户端(cli / 行业APP) ── REST+SSE ──┐
+L4 server    认证/会话API/事件推送/配额  │ TenantContext 唯一构造点
+L3 assembly  Profile/Skill/Registry     │ 声明式,无运行时逻辑
+L2 harness   Loop/Context/编排/SubAgent/Session/HITL
+L1 modules   memory│model_gateway│tools│knowledge│observability│eval│sandbox
+L0 foundation config│errors│logging│tenancy│types│factory
 
-```mermaid
-flowchart TB
-    subgraph App["上层应用层 (Application)"]
-        A1["Agent / 产品 A"]
-        A2["Agent / 产品 B"]
-    end
+依赖方向严格单向向下,由 import-linter 三条契约在 CI 强制
+(分层/模块独立/harness 禁触 providers)。
 
-    subgraph Adapter["适配层 (Adapter)"]
-        AD["统一调用入口<br/>翻译 + 屏蔽底层实现"]
-    end
+## 2. 各层职责与边界
 
-    subgraph Infra["Agent Infra 层"]
-        M["记忆模块 (Memory)<br/>★本阶段实现 · 自包含"]
-        C["上下文模块 (Context)<br/>○后续模块 · 同构接入"]
-        X["其他模块 ...<br/>○后续模块"]
-    end
+### L0 foundation
+零业务语义。tenancy.TenantContext(tenant_id, user_id) 为
+frozen dataclass;errors 定义 KairosError → ProviderError 体系;
+底层异常(lancedb/openai/mcp)必须在 provider 层封装,不外泄。
 
-    subgraph Found["底座 (Foundation)"]
-        CFG["配置机制"]
-        OBS["可观测性 (日志/trace)"]
-        ERR["统一错误类型"]
-        IFACE["统一接口风格约定"]
-    end
+### L1 modules(每模块固定骨架:contracts/ + providers/ + factory.py)
 
-    A1 --> AD
-    A2 --> AD
-    AD --> M
-    AD -.后续.-> C
-    AD -.后续.-> X
-    M --> Found
-    C -.-> Found
-    X -.-> Found
-```
+| 模块 | 契约核心 | 要点 |
+|---|---|---|
+| memory | MemoryStore/Retriever | 经验型长期记忆;租户物理分表 `{tenant_id}__{kind}` + 表内 `owner_id` 过滤(ADR 0013) |
+| model_gateway | ChatModel/ModelRouter | tier 路由(strong/fast/cheap),降级链,按租户成本记账 |
+| tools | ToolSpec/ToolRegistry/ToolExecutor | 内置/MCP/Skill脚本三源统一;MCP 是 provider 细节 |
+| knowledge | KnowledgePack/KnowledgeRetriever | 资料型知识(与 memory 的"经验"分立) |
+| observability | StepSink/TraceQuery | Step 即 trace 即 checkpoint;可选 OTel 导出 |
+| eval | CaseSet/Judge/Replay | trace 回放 + 回归对比 |
+| sandbox | ScriptRunner | Skill 脚本隔离执行(P2) |
 
-| 层 | 职责 | 不该做的事 |
-|----|------|-----------|
-| **上层应用层** | 具体 Agent / 产品的业务逻辑、编排、与 LLM 对话。决定"写什么记忆、何时检索"。 | 不直接依赖 infra 内部数据结构、不直接 import 模块的领域模型。 |
-| **适配层** | 把上层业务语言翻译成 infra 接口;参数校验、鉴权占位、协议转换。是上层与 infra 之间**唯一的耦合点**。 | 不写模块领域逻辑;不绕过模块直接访问其存储。 |
-| **Agent Infra 层** | 各 infra 模块的领域逻辑与存储。每个模块**自包含**:自己的领域逻辑、存储/模型抽象、对外 facade。本阶段只实现记忆模块。 | 模块之间不互相 import 内部实现。 |
-| **底座 (Foundation)** | 横切关注点:配置、可观测性、错误类型、接口风格约定。所有模块共享。 | 不含任何业务/记忆逻辑,保持"薄"。具体见 [foundation](../foundation/foundation.md)。 |
+不变量:模块间零依赖;所有读写接口首参 ctx: TenantContext;
+对外 API 一律 async,纯 CPU 计算保持同步。
 
-## 模块依赖方向
+### L2 harness
+唯一的跨模块编排层,只 import 各模块 contracts,实现经 factory 注入。
 
-**依赖只能从上往下、从外到内,绝不反向。**
+- **loop**:显式状态机 Assemble→ModelCall→Route→Execute→Observe。
+  每轮产出不可变 Step(输入快照/输出/工具结果/token/耗时)。
+  预算树:max_turns/max_tokens/max_cost/deadline,触发即进入
+  "优雅收尾"分支。终止/反思策略由 loop policy 配置(来自 Profile)。
+- **context**:分区组装 system(persona)+记忆区+知识区+工具定义
+  +历史+当前任务,各区独立预算与压缩策略。记忆/Skill 的注入
+  时机与位置是本层职责——memory/knowledge 只提供检索能力。
+- **orchestration**:工具调度/超时/重试/并发;权限模型
+  (allow / require_approval),审批请求经 hitl 外发。
+- **subagent**:sub-agent = 一种特殊工具调用,即递归的 Loop。
+  spawn(profile_ref, task, budget):独立上下文、受限工具集、
+  预算从父扣减、结果作为工具结果回传。
+- **session**:SessionStore 契约(SQLite dev / PostgreSQL 生产),
+  支持中断续跑(从 Step 序列恢复)。
+- **hitl**:审批点管理 + AgentEvent 生成(协议见 protocol/agent-events.md)。
 
-```mermaid
-flowchart LR
-    App["上层应用"] --> Adapter["适配层"]
-    Adapter --> Facade["模块对外 Facade<br/>(memory.facade)"]
-    Facade --> Core["模块领域逻辑"]
-    Core --> Abstr["模块内的抽象接口<br/>(VectorStore/Embedding...)"]
-    Core --> Found["底座<br/>(config/errors/obs)"]
-    Abstr -.实现注入.-> Impl["具体实现<br/>(LanceDB/本地或远程模型)"]
-```
+### L3 assembly
+Assistant Profile(声明式,Pydantic schema 校验):
+persona / skills / knowledge_packs / tools(allow+require_approval)
+/ memory_namespace / loop_policy(含 model_tier) / compliance
+/ subagents。
+Skill = 目录(SKILL.md + resources/ + scripts/),渐进式披露:
+系统提示仅注入 name+description,按需加载全文。
+本层无运行时逻辑,只做加载/校验/注册,供 harness 消费。
 
-三条硬规则:
+### L4 server
+认证:Authenticator 契约,首个实现 API Key per tenant
+(Bearer,服务端存哈希);TenantContext 只在认证中间件构造。
+API 面:会话 CRUD / run 触发 / SSE 事件流 / 审批回执 /
+Profile 管理 / 配额查询。
 
-1. **应用 → 适配 → infra 模块 → 底座**,单向。底座不依赖任何模块。
-2. **领域逻辑依赖抽象,不依赖实现**。记忆领域逻辑依赖模块内的 `VectorStore`/`EmbeddingProvider` 抽象;LanceDB、OpenAI 等实现由配置在启动时注入(依赖倒置)。
-3. **模块之间不横向依赖内部**。记忆模块与未来的上下文模块,只能通过各自的 facade 或底座契约通信。
+### L5 客户端
+cli 为参考实现,只消费 server API。行业 APP 独立仓库,
+唯一耦合面 = REST API + agent-events 协议(版本化 JSON Schema)。
 
-> **注意抽象接口的归属**:`VectorStore`/`EmbeddingProvider` 等抽象目前在**记忆模块内部**(`memory/contracts/`),不在底座。原因见 [overview](./overview.md) 的"避免过度设计"原则——它们只有记忆模块用。这不影响依赖倒置:模块的领域逻辑依赖模块内的抽象,具体实现配置注入,可插拔性照样成立。
+## 3. 租户模型
 
-> **为什么强调依赖方向?** 这是"可插拔"能否成立的技术基础。只要领域逻辑里出现一处 `import lancedb`,LanceDB 就再也换不掉了。把依赖方向做成可被 lint 检查的硬规则(见 [foundation](../foundation/foundation.md) 的 import-linter),解耦才不会随时间腐化。
+- 边界:信任边界在 tenant 级(API Key);user_id 由客户端声明,
+  受 tenant key 约束。用户级强认证留 Authenticator 扩展位。
+- 隔离不变量:租户是硬边界——memory 按 `{tenant_id}__{kind}` 物理分表
+  (ADR 0013)、knowledge/session/observability 按 `tenant_id` 列强制过滤;
+  表内再按 `owner_id`(user)过滤。禁止跨租户召回,缺作用域 fail-closed,
+  由契约测试固化(ADR 0009)。
+- 记账:model_gateway 按租户聚合 token/成本,server 层执行配额。
+- 合规:日志脱敏 strict 档——不落记忆/知识明文与学生 PII,
+  只记元数据与 id/哈希前缀。
 
-## 解耦如何落地(从原则到机制)
+## 4. 一次完整 run 的数据流(简)
 
-每条原则都对应一个具体机制,不是口号:
+client → server(认证,构造 ctx) → harness.loop
+  → context(检索 memory/knowledge,组装分区 prompt)
+  → model_gateway(tier 路由) → route:
+     工具调用 → orchestration(权限检查→执行/审批) → Observe → 循环
+     spawn → subagent(子 Loop) → 结果回传 → 循环
+     回复/终止 → run_finished
+全程每轮 Step 写 observability;AgentEvent 经 SSE 推送 client。
 
-| 解耦原则 | 落地机制 | 在哪 |
-|----------|---------|------|
-| 上层与 infra 解耦 | 适配层作唯一翻译边界;对外只暴露 DTO,不暴露领域模型 | [memory/api](../modules/memory/api.md) |
-| 模块与向量库解耦 | 模块内 `VectorStore` 抽象 + LanceDB 实现 | [memory/retrieval](../modules/memory/retrieval.md) |
-| 模块与模型解耦 | 模块内 `EmbeddingProvider`/`RerankProvider` Protocol + Factory | [memory/retrieval](../modules/memory/retrieval.md) |
-| 模块之间解耦 | 每个模块有独立 facade;模块自包含,互不 import 内部 | [memory/README](../modules/memory/README.md) |
-| 检索复杂度对调用方解耦 | "方法→管线路由":对外暴露 vector/keyword/hybrid,内部融合隐藏 | [memory/retrieval](../modules/memory/retrieval.md) |
-| 实现可替换性可验证 | 针对抽象接口写契约测试,任何实现必须通过 | [foundation](../foundation/foundation.md) |
+## 5. 本文档的下游
 
-## 一次典型调用的数据流
-
-以"Agent 在对话中检索相关记忆"为例:
-
-```mermaid
-sequenceDiagram
-    participant App as 上层 Agent
-    participant Ad as 适配层
-    participant Mem as 记忆 Facade
-    participant Ret as 检索层(模块内)
-    participant Emb as EmbeddingProvider
-    participant Vec as VectorStore(LanceDB)
-    participant Rr as RerankProvider
-
-    App->>Ad: recall(user_id, query, 业务参数)
-    Ad->>Ad: 校验 + 翻译成 RecallRequest(DTO)
-    Ad->>Mem: recall(RecallRequest)
-    Mem->>Ret: search(query, kinds, method=hybrid)
-    Ret->>Emb: embed(query)
-    Emb-->>Ret: query_vector
-    par 多路召回
-        Ret->>Vec: 向量召回
-        Vec-->>Ret: 候选集 A
-    and
-        Ret->>Vec: BM25 召回
-        Vec-->>Ret: 候选集 B
-    end
-    Ret->>Ret: RRF 融合(A, B)
-    opt 开启 rerank
-        Ret->>Rr: rerank(query, 候选文本)
-        Rr-->>Ret: 重排顺序
-    end
-    Ret-->>Mem: 排序后命中
-    Mem-->>Ad: RecallResult(领域结果)
-    Ad-->>App: RecallResponse(DTO)
-```
-
-解耦点在链路上的体现:App 传业务参数、适配层翻译成 DTO;检索层调的是抽象接口,注入本地模型+本地 LanceDB 或远程 API,链路代码不变;融合与是否 rerank 在检索层内部决定,调用方只说了 `method=hybrid`。
-
-## 部署形态(本阶段)
-
-本阶段默认**单机嵌入式**:infra 作为 Python 库被适配层进程内调用,LanceDB 以本地文件目录存储。与 [overview](./overview.md) 的"不做分布式"非目标一致。
-
-未来若需服务化(HTTP/gRPC),适配层是天然的服务化边界——把适配层包成服务进程,对外 API 签名(见 [memory/api](../modules/memory/api.md))不变。本阶段不实现,见 [roadmap](./roadmap.md)。
-
----
-
-下一篇:[roadmap](./roadmap.md) — 交付总览、新模块接入流程、演进路线。
+协议细节 → protocol/agent-events.md;各层详设 → harness/*.md、
+modules/*.md、assembly/*.md;决策依据 → docs/adr/。

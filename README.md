@@ -1,14 +1,15 @@
 # Kairos Agent Infra
 
-一套**解耦的 Agent 基础设施**。各基础设施模块(记忆、上下文等)彼此独立,可单独演进、单独替换。
+一套**解耦的 Agent 基础设施**(headless Agent Runtime 服务)。目标路径:通用个人助手(验证底座)→ 垂直行业助手(商业落地);首个行业为教育。
 
-- **三层架构**:上层应用层 → 适配层 → Agent Infra 层。
-- **核心原则**:高内聚低耦合、模块可插拔、避免过度设计。
-- **技术栈**:Python;向量库 LanceDB。
+- **六层架构**:`foundation`(L0)→ `modules`(L1)→ `harness`(L2)→ `assembly`(L3)→ `server`(L4)→ `cli`(L5),依赖严格单向向下。
+- **核心命题**:新建行业助手不改底座一行代码,只新增 Profile + Skill 包 + 知识包。此命题是全项目持续验收标准。
+- **核心原则**:高内聚低耦合、模块可插拔、契约驱动、避免过度设计(YAGNI)、租户隔离是不变量。
+- **技术栈**:Python 3.13;向量库 LanceDB。
 
 ## 当前状态
 
-**第一阶段(MVP)设计阶段** — 范围:项目底座 + 记忆模块。其余模块只留接入约定。实时进度见 [PROGRESS.md](./PROGRESS.md)。
+**Phase 1(系统设计)已完成** — 六层架构、事件协议、harness 五篇、模块设计(memory 四件套定稿)、assembly 两篇、教育垂直、纸上演练通过、ADR 0001–0017 建档。实时进度见 [PROGRESS.md](./PROGRESS.md),演进路线见 [roadmap](./docs/project/roadmap.md)。
 
 ## 协作方式
 
@@ -26,16 +27,21 @@ kairos-agent-infra/
 ├── AGENTS.md          # Agent 协作规范(唯一事实源,跨工具通用)
 ├── CLAUDE.md          # 薄引用,导入 AGENTS.md
 ├── PROGRESS.md        # 进度事实源
-├── pyproject.toml     # 依赖与工具配置(待创建)
-├── src/kairos/        # 源码(待创建):foundation / modules/memory / adapter
-├── tests/             # 测试(待创建):unit / contracts / integration
+├── pyproject.toml     # 依赖与工具配置(uv 管理)
+├── src/kairos/        # 源码:foundation / modules / harness / assembly / server / cli
+├── tests/             # 测试:unit / contracts / integration
 └── docs/              # 设计文档与决策记录
-    ├── project/       #   整体项目:概述、架构、路线
-    ├── foundation/    #   底座
-    ├── modules/memory/#   记忆模块(自包含)
+    ├── project/       #   整体项目:概述、六层架构、路线
+    ├── protocol/      #   对外事件协议
+    ├── foundation/    #   L0 底座
+    ├── harness/       #   L2 运行时骨架
+    ├── modules/       #   L1 infra 模块(memory / model-gateway / tools / knowledge / observability / eval / benchmark)
+    ├── assembly/      #   L3 声明式装配(profile / skills)
+    ├── verticals/     #   垂直样例(education)
     └── adr/           #   架构决策记录
 ```
 
 ## 文档入口
 
 文档结构映射系统结构。从 [文档导航](./docs/README.md) 或 [项目概述](./docs/project/overview.md) 开始。重大技术决策见 [ADR](./docs/adr/README.md)。
+

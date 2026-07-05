@@ -5,6 +5,8 @@
 - **相关文档**:[modules/memory/memory-types.md](../modules/memory/memory-types.md)、[modules/memory/tradeoffs.md](../modules/memory/tradeoffs.md)
 - **上位关系**:本决策是 [ADR 0004](./0004-no-knowledge-graph-mvp.md)、[ADR 0005](./0005-decay-ranking-conflict-deletion.md) 的上位前提——前者决定"分几类记忆、按什么轴分",后两者在此之上规定每类的建模与衰减策略。
 
+> **术语更新(2026-07,六层架构落地后)**:本 ADR 标题与正文中"工作记忆归**应用/适配层**"的"应用/适配层",在现六层架构([ADR 0014](./0014-six-layer-naming-import-linter.md))中对应 **harness 层**(具体为 Context Engine,见 [harness/context.md](../harness/context.md) §3 的窗口保留与压缩)。原结论(工作记忆不在 memory 模块内)**不变**,仅术语随架构文档统一。
+
 ## 背景
 
 记忆模块最初的分类是 `personal / session / experience`。在研讨"短期会话记忆到底有没有必要"时暴露出一个根本问题:**这三类不是沿一条干净的轴切出来的**,而是把三条不同的轴(生命周期、归属、认知功能)碰巧重叠在一起命名:

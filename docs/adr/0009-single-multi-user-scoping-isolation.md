@@ -5,6 +5,8 @@
 - **相关文档**:[modules/memory/memory-types.md](../modules/memory/memory-types.md)、[modules/memory/retrieval.md](../modules/memory/retrieval.md)、[modules/memory/api.md](../modules/memory/api.md)、[modules/memory/tradeoffs.md](../modules/memory/tradeoffs.md)
 - **上位关系**:延续 [ADR 0007](./0007-memory-mechanism-vs-policy-timing.md) 的机制/策略分界(隔离=机制、共享=策略);procedural 的全局共享依赖 [ADR 0008](./0008-procedural-evaluation-decoupling.md) 的模块外评估/脱敏 pipeline;作用域字段沿用 [ADR 0006](./0006-memory-classification-by-cognitive-function.md) 已有的 `owner_id`/`namespace`/`tags`,不新增。
 
+> **物理实现更新(2026-07,S10 租户化重审后)**:本 ADR 结论 §2、理由 §2 中选择的"**单表 + `(namespace, owner_id)` pre-filter**"物理存储方案,已被 [ADR 0013](./0013-lancedb-tenant-physical-tables.md) 更新为"**租户物理分表 `{tenant_id}__{kind}` + 表内 `owner_id` 过滤**"(合规删除刚需)。本 ADR 的**隔离原则不变**——强制作用域、fail-closed(缺则拒绝)、作用域从可信上下文派生、跨 owner 隔离落契约测试;仅"租户轴的物理落地方式"由 ADR 0013 取代,`namespace` 字段随之退化为表名维度(不再是表内列)。术语上"作用域从可信上下文派生"的载体明确为 `ctx: TenantContext`([ADR 0012](./0012-tenant-context-explicit-passing.md))。
+
 ## 背景
 
 记忆模块要同时支持**单用户**(单机个人助理)与**多用户**(一个部署服务多个用户,如多教师)。研讨"要不要为两者分别设计"时,确立一个判断:**不分两套**。单用户是多用户的**退化情形**——单机单用户时所有记忆落在 `(namespace=default, owner_id=该用户)`,多用户只是这两个字段取不同值。这与项目的"基座+垂直分层"同构:不为单用户砍功能,也不为多用户加平行结构。

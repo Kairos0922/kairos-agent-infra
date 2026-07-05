@@ -1,12 +1,14 @@
 # 底座 (Foundation)
 
-底座是支撑所有 infra 模块的工程地基。它的职责边界很明确:**只放现在就真正横切的关注点,不放任何业务逻辑,也不预先放"未来可能共享"的抽象。** 保持"薄"。
+底座是支撑所有上层的工程地基(六层架构的 L0,见 [architecture](../project/architecture.md))。它的职责边界很明确:**只放现在就真正横切的关注点,不放任何业务逻辑,也不预先放"未来可能共享"的抽象。** 保持"薄"。
 
 > **底座放什么、不放什么**(贯彻"避免过度设计"):
-> - **放**:配置机制、错误层级、日志/trace 接入点、统一接口风格约定、跨模块的基础类型、工程化骨架。这些是**任何模块从第一天起就需要**的。
-> - **不放**:`VectorStore`/`EmbeddingProvider` 等抽象——它们目前只有记忆模块用,归记忆模块内部。等第二个模块确有复用需求,再上提到底座(见 [project/roadmap](../project/roadmap.md))。
+> - **放**:配置机制、错误层级、租户上下文(`tenancy`)、日志/trace 接入点、统一接口风格约定、跨模块的基础类型、模块装配骨架。这些是**任何模块从第一天起就需要**的横切关注点。
+> - **不放**:`VectorStore`/`EmbeddingProvider` 等抽象——它们目前只有记忆模块用,归记忆模块内部(ADR 0003)。等第二个消费者(Phase 3 knowledge)确有复用需求,再上提到底座(ADR 0015)。
 
-## 项目目录结构
+## 项目目录结构(六层)
+
+分层与依赖方向的权威定义见 [architecture](../project/architecture.md) 与 [ADR 0014](../adr/0014-six-layer-naming-import-linter.md)。目录映射六层:
 
 ```
 kairos-agent-infra/
@@ -15,25 +17,27 @@ kairos-agent-infra/
 ├── docs/                          # 设计文档(本资产)
 ├── src/
 │   └── kairos/
-│       ├── foundation/            # ① 底座:横切关注点,不含业务逻辑
+│       ├── foundation/            # L0 底座:横切关注点,不含业务逻辑
 │       │   ├── config.py          #    配置加载与校验(pydantic-settings)
 │       │   ├── errors.py          #    统一错误类型层级
+│       │   ├── tenancy.py         #    TenantContext(frozen dataclass,ADR 0012)
 │       │   ├── logging.py         #    结构化日志
 │       │   ├── tracing.py         #    trace 接入点(OpenTelemetry 抽象)
-│       │   ├── registry.py        #    模块注册机制
+│       │   ├── registry.py        #    模块注册/装配机制
 │       │   └── types.py           #    跨模块共享的基础类型(无业务语义)
 │       │
-│       ├── modules/               # ② infra 模块:每个自包含、互不依赖内部
-│       │   └── memory/            #    记忆模块(本阶段唯一实现)
-│       │       ├── facade.py      #      对外 Facade(模块唯一入口)
-│       │       ├── models.py      #      领域模型 + LanceDB schema
-│       │       ├── contracts/     #      模块内的抽象接口(只服务记忆模块)
+│       ├── modules/               # L1 infra 模块:每个自包含、互不依赖内部
+│       │   └── memory/            #    记忆模块(第一批实现)
+│       │       ├── contracts/     #      抽象接口(对外契约 + provider 契约)
+│       │       │   ├── store.py         # MemoryStore / Retriever(harness 消费)
 │       │       │   ├── vector_store.py
 │       │       │   ├── embedding.py
 │       │       │   ├── rerank.py
 │       │       │   └── tokenizer.py
-│       │       ├── providers/     #      上述抽象的具体实现(可插拔)
-│       │       │   ├── vector/lancedb_store.py
+│       │       ├── store.py       #      MemoryStore/Retriever 实现(领域总入口)
+│       │       ├── models.py      #      领域模型(MemoryBase + 三类 kind)
+│       │       ├── providers/     #      provider 契约的具体实现(可插拔)
+│       │       │   ├── vector/lancedb_store.py   # 含租户物理分表路由(ADR 0013)
 │       │       │   ├── embedding/{openai_compat,sentence_transformer}.py
 │       │       │   ├── rerank/{cross_encoder,http_rerank}.py
 │       │       │   ├── tokenizer/jieba_tokenizer.py
@@ -42,17 +46,18 @@ kairos-agent-infra/
 │       │       │   ├── semantic.py
 │       │       │   ├── episodic.py
 │       │       │   └── procedural.py
-│       │       ├── retrieval/     #      统一检索层
-│       │       │   ├── searcher.py
-│       │       │   ├── fusion.py
-│       │       │   └── recall.py   #      召回函数 + RecallRouter(选择性召回门控)
-│       │       #   (trace 评估/提炼是模块外的独立关注点,见 ADR 0008;
-│       │       #    模块对 procedural 只暴露"写入已提炼经验",不含 distiller)
+│       │       └── retrieval/     #      统一检索层
+│       │           ├── searcher.py
+│       │           ├── fusion.py
+│       │           └── recall.py   #      召回函数 + RecallRouter(选择性召回门控)
+│       │       #   (trace 评估/提炼是模块外的独立关注点,归 harness/distill,ADR 0008;
+│       │       #    模块对 procedural 只暴露 write_experience,不含 distiller)
 │       │
-│       └── adapter/               # ③ 适配层:上层应用调用 infra 的入口
-│           ├── memory_adapter.py
-│           ├── experience_producer.py  # procedural 经验的模块外占位生产者(ADR 0008)
-│           └── dto.py             #    对外 DTO(与领域模型隔离)
+│       ├── harness/               # L2 运行时骨架:唯一跨模块编排层
+│       │                          #    loop / context / orchestration / subagent / session / hitl / distill
+│       ├── assembly/              # L3 声明式装配:profile / skill / registry(无运行时逻辑)
+│       ├── server/                # L4 对外服务面:认证 / REST+SSE / 配额;TenantContext 唯一构造点
+│       └── cli/                   # L5 参考客户端:只消费 server API
 │
 └── tests/
     ├── unit/                      # 纯逻辑单测(mock 掉 Provider/Store)
@@ -61,18 +66,21 @@ kairos-agent-infra/
     └── conftest.py
 ```
 
-> **关键结构决策:抽象接口 `contracts/` 在模块内,不在顶层。** 我之前的草案把 `contracts/`、`providers/` 放顶层,等于预设它们是全局共享的——这是过度设计。按"模块自包含"原则,记忆模块自己的抽象就放在 `modules/memory/contracts/`。这样删掉记忆模块目录,底座与项目骨架仍独立成立。
+> **关键结构决策:抽象接口 `contracts/` 在模块内,不在顶层。** 按"模块自包含"原则,记忆模块自己的抽象放在 `modules/memory/contracts/`。这样删掉记忆模块目录,底座与项目骨架仍独立成立。Phase 2 起,L2–L5 各层随对应设计落地(见 [roadmap](../project/roadmap.md));本阶段 L2+ 为 docstring-only 骨架包,使 import-linter 六层契约可从第一天激活。
 
-### 目录依赖规则
+### 目录依赖规则(六层单向)
 
-| 目录 | 角色 | 允许依赖 | 禁止依赖 |
+| 目录 | 层级 | 允许依赖 | 禁止依赖 |
 |------|------|---------|---------|
-| `foundation/` | 底座 | 仅标准库与基础三方库 | 任何模块、适配层 |
-| `modules/<m>/` | infra 模块 | `foundation/` + 自己 | 其他模块的内部、适配层 |
+| `foundation/` | L0 | 仅标准库与基础三方库 | 任何上层 |
+| `modules/<m>/` | L1 | `foundation/` + 自己 | 其他模块的内部、任何上层 |
 | `modules/<m>/<内部>` | 模块内分层 | 模块内遵循领域→抽象→实现的倒置(领域逻辑不依赖 `providers/`) | — |
-| `adapter/` | 适配层 | 模块的 facade、`foundation/` | 模块内部(只碰 facade)、`providers/` 内部 |
+| `harness/` | L2 | 各模块的 **contracts**(禁触 `providers`)、`foundation/` | 模块 providers 内部、上层 |
+| `assembly/` | L3 | `harness/`、`foundation/` | 运行时逻辑 |
+| `server/` | L4 | `assembly/`、`harness/`、`foundation/` | — |
+| `cli/` | L5 | 仅 server HTTP API（+ `foundation.types`) | 任何内层包 |
 
-> **核心约束**:`modules/memory/` 的领域逻辑(`kinds/`、`retrieval/searcher`)**不允许 `import lancedb`,不允许 import 自己的 `providers/`**。它只依赖模块内的 `contracts/` 抽象;具体实现由 `providers/factory.py` 在启动时按配置组装、注入。这是"可插拔"的命门,用 import-linter 在 CI 强制。
+> **核心约束**:`modules/memory/` 的领域逻辑(`store`、`kinds/`、`retrieval/searcher`)**不允许 `import lancedb`,不允许 import 自己的 `providers/`**。它只依赖模块内的 `contracts/` 抽象;具体实现由组装根(server/harness 启动路径)按配置组装、注入(ADR 0011)。同理 **harness 只依赖各模块 contracts、禁止 import 任何 `providers`**。这些是"可插拔"的命门,由 import-linter 三契约在 CI 强制(ADR 0014)。
 
 ## 配置管理
 
@@ -121,7 +129,7 @@ class MemoryConfig(BaseModel):
     # 选择性召回:是否默认启用 RecallRouter 门控(ADR 0007;默认关,由上层显式开)
     recall_router_enabled: bool = False
     # 注:procedural 的 trace 提炼/评估在模块外(ADR 0008),其门控参数
-    #     (如最小 trace 长度)属模块外占位生产者,不在 MemoryConfig。
+    #     (如最小 trace 长度)属 harness/distill 管线,不在 MemoryConfig。
 
 
 class KairosSettings(BaseSettings):
@@ -146,6 +154,24 @@ class KairosSettings(BaseSettings):
 - **密钥永不进配置值**,只存环境变量名(`api_key_env`),运行时按名读取。不在配置文件、不在日志出现明文。
 - **`dim` 一致性**:embedding 维度必须等于向量列维度,启动校验,不一致 fail-fast。
 
+### 租户上下文(tenancy)
+
+`foundation/tenancy.py` 定义 `TenantContext`,是租户隔离的传递载体:
+
+```python
+# foundation/tenancy.py(草案)
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class TenantContext:
+    tenant_id: str    # 信任边界(API Key per tenant,ADR 0010);记忆表按此物理分表(ADR 0013)
+    user_id: str      # 同租户内实体归属;记忆表内 owner_id 过滤
+```
+
+- **唯一构造点在 server 认证中间件**(ADR 0010),向下**显式传参**贯穿全栈,禁用 contextvar 隐式传递(ADR 0012)。
+- `frozen=True` 保证不可变,构造后不可篡改。
+- 所有涉及租户数据的接口首参 `ctx: TenantContext`;缺失/无效 → fail-closed(ADR 0009)。
+
 ## 统一对外接口风格
 
 底座层面对所有 infra 模块的**强制约定**,保证不同模块、不同时期的 API 长得一样。
@@ -155,7 +181,7 @@ class KairosSettings(BaseSettings):
 **对外 API 一律 `async`。** 理由:检索链路天然 IO 密集(embedding/向量库/rerank 调用),async 能让多路召回、批量 embedding 并发;未来服务化零摩擦。**唯一例外:CPU 密集且无 IO 的纯计算**(分词、RRF)保持同步函数,由 async 调用方直接调用(EverOS 同样取舍)。
 
 ```python
-async def recall(self, req: RecallRequest) -> RecallResult: ...        # 对外:async
+async def recall(self, ctx: TenantContext, req: RecallRequest) -> RecallResponse: ...  # 对外:async
 def reciprocal_rank_fusion(runs: list[list[str]]) -> list[...]: ...     # 纯计算:sync
 ```
 
@@ -186,11 +212,11 @@ class NotConfiguredError(KairosError):
 
 - **Provider 层错误统一封装**成 `ProviderError`,不让 `openai.APIError`、`lancedb` 异常泄漏到上层——否则换实现时上层的 except 失效,是隐性耦合。
 - **Fail-fast 组件守卫**:模块初始化时校验"所选方法所需组件是否齐备",缺了就抛 `NotConfiguredError`,不等到第一次检索才失败(借鉴 EverOS 的 `_validate_components`)。
-- **输入校验在适配层 + DTO** 完成,领域逻辑假设输入已合法。
+- **输入校验在模块边界 + DTO(Pydantic v2)** 完成,领域逻辑假设输入已合法;HTTP 状态码映射由 server 层统一执行(见 [memory/api](../modules/memory/api.md))。
 
 ### DTO 与领域模型隔离
 
-对外 API 收发 DTO(`adapter/dto.py`),内部用领域模型(`modules/memory/models.py`),显式转换。领域模型重构不破坏对外契约,反之亦然。详见 [memory/api](../modules/memory/api.md)。
+模块对外契约收发 DTO(`modules/memory/contracts/`,Pydantic v2),内部用领域模型(`modules/memory/models.py`),显式转换。领域模型重构不破坏对外契约,反之亦然。DTO 一律 Pydantic v2、禁裸 dict 跨层(ADR 0014)。详见 [memory/api](../modules/memory/api.md)。
 
 ## 可观测性预留
 
@@ -221,7 +247,7 @@ def span(name: str, **attrs):
 
 在关键路径(recall、embed、向量查询、rerank)预埋 `with span(...)`。默认关闭,no-op。
 
-> **为什么现在就埋?** 这同时是记忆模块"程序记忆"的数据来源——Agent 的 trace 既用于可观测性,也是 procedural 记忆的原料(见 [memory/memory-types](../modules/memory/memory-types.md))。两者共用一套 trace 抽象,避免重复造轮子。**边界(ADR 0008)**:trace 抽象放底座(横切);而"如何把 trace 评估、提炼成经验"是**记忆模块之外的策略**(独立 pipeline,MVP 为模块外占位生产者),**不在记忆模块业务逻辑内**——记忆模块对 procedural 只接收"已提炼经验"。这是横切、模块机制、模块外策略三者的分界。
+> **为什么现在就埋?** 这同时是记忆模块"程序记忆"的数据来源——Agent 的 trace(Step)既用于可观测性,也是 procedural 记忆的原料(见 [memory/memory-types](../modules/memory/memory-types.md))。两者共用一套 trace 抽象,避免重复造轮子。**边界(ADR 0008)**:trace 抽象放底座(横切);Step 的持久化归 observability 模块;而"如何把 trace 评估、提炼成经验"是**记忆模块之外的策略**——六层下由 **harness/distill 管线**承担(见 [harness/distill](../harness/distill.md)),**不在记忆模块业务逻辑内**——记忆模块对 procedural 只接收"已提炼经验"。这是横切、模块机制、模块外策略三者的分界。
 
 ## 测试与工程化骨架
 

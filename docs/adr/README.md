@@ -13,13 +13,22 @@
 | [0003](./0003-abstractions-in-module.md) | 抽象接口归属记忆模块,不预先上提到底座 | 已接受 |
 | [0004](./0004-no-knowledge-graph-mvp.md) | MVP 不做知识图谱,先做原子事实 | 已接受 |
 | [0005](./0005-decay-ranking-conflict-deletion.md) | 衰减管排序,冲突管删除(两套机制分开) | 已接受 |
-| [0006](./0006-memory-classification-by-cognitive-function.md) | 记忆按认知功能分类(工作记忆归应用层,长期记忆分情景/语义/程序) | 已接受 |
+| [0006](./0006-memory-classification-by-cognitive-function.md) | 记忆按认知功能分类(工作记忆归 harness 层,长期记忆分情景/语义/程序) | 已接受(0014 术语更新) |
 | [0007](./0007-memory-mechanism-vs-policy-timing.md) | 记忆模块是机制,时机与质量评估是策略(写入/召回时机 + 选择性召回) | 已接受 |
 | [0008](./0008-procedural-evaluation-decoupling.md) | 程序记忆的 trace 评估/提炼与记忆模块解耦 | 已接受 |
-| [0009](./0009-single-multi-user-scoping-isolation.md) | 单/多用户记忆作用域与隔离(隔离是机制,共享是策略) | 已接受 |
+| [0009](./0009-single-multi-user-scoping-isolation.md) | 单/多用户记忆作用域与隔离(隔离是机制,共享是策略) | 已接受(0013 更新物理实现) |
+| [0010](./0010-auth-api-key-per-tenant.md) | 认证采用 API Key per tenant,Authenticator 契约留 OIDC 扩展位 | 已接受 |
+| [0011](./0011-model-contract-ownership.md) | 模型能力契约归属:模块内定义 + 组装根适配 | 已接受 |
+| [0012](./0012-tenant-context-explicit-passing.md) | TenantContext 显式传参,禁用 contextvar 隐式传递 | 已接受 |
+| [0013](./0013-lancedb-tenant-physical-tables.md) | LanceDB 租户隔离采用物理分表(`{tenant_id}__{kind}`) | 已接受 |
+| [0014](./0014-six-layer-naming-import-linter.md) | 六层架构分层命名与 import-linter 契约冻结 | 已接受 |
+| [0015](./0015-vector-store-uplift-foundation.md) | 向量存储契约与 RRF 融合上提 foundation(Phase 3) | 已接受(Phase 3 触发) |
+| [0016](./0016-subagent-as-tool-call.md) | Sub-agent 统一建模为工具调用(父子式,禁自由拓扑) | 已接受 |
+| [0017](./0017-scope-metadata-inference.md) | Scope Metadata 推断规则与降级语义 | 已接受 |
 
 ## 状态说明
 
 - **提议中 (Proposed)**:待用户决策。
 - **已接受 (Accepted)**:已采纳,正在执行。
 - **已废弃 (Deprecated)**:被后续决策取代,保留记录(注明被哪条取代)。
+- **追记/更新**:历史 ADR 不改写结论,但后续决策可对其术语或局部实现追记说明(如 0006 术语更新、0009 物理实现由 0013 更新)。

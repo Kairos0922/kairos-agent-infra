@@ -5,6 +5,8 @@
 - **相关文档**:[modules/memory/memory-types.md](../modules/memory/memory-types.md)、[modules/memory/api.md](../modules/memory/api.md)、[foundation/foundation.md](../foundation/foundation.md)
 - **上位关系**:本决策是 [ADR 0007](./0007-memory-mechanism-vs-policy-timing.md)(机制/策略分离)在**程序记忆**上的直接推论;延续 [ADR 0006](./0006-memory-classification-by-cognitive-function.md) 对 procedural 的定位。
 
+> **术语更新(2026-07,六层架构落地后)**:本 ADR 中"评估/提炼放**模块外**(适配层或独立占位模块)"的具体落点,在现六层架构中明确为 **harness/distill 管线**(见 [harness/distill.md](../harness/distill.md)),trace(Step)持久化归 observability 模块。原结论(评估/提炼与记忆模块解耦、模块只收已提炼经验)不变;"MVP 模块外占位生产者"具体化为 distill v1(人工触发、无审核界面)。`foundation/tracing.py` 仍是 trace 抽象所在。
+
 ## 背景
 
 程序记忆(procedural)的原料不是用户输入,而是 **Agent 自己的执行 trace**。原先的设计把整条链路放进了记忆模块内部:
