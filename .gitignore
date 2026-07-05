@@ -12,8 +12,9 @@ coverage.xml
 dist/
 build/
 
-# 本地数据(LanceDB 默认存储目录)
-.kairos/
+# 本地数据(LanceDB 默认存储目录等运行时数据);放行项目配置文件 config.toml
+.kairos/*
+!.kairos/config.toml
 
 # 环境与密钥
 .env

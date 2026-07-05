@@ -103,7 +103,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [ADR 索引](./adr/README.md) | 0001–0017 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与 import-linter、向量存储上提、sub-agent 为工具、scope 推断。 |
+| [ADR 索引](./adr/README.md) | 0001–0018 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与 import-linter、向量存储上提、sub-agent 为工具、scope 推断、配置文件用 TOML。 |
 
 ## 阅读顺序建议
 

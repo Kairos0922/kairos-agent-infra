@@ -21,10 +21,10 @@ kairos-agent-infra/
 │       │   ├── config.py          #    配置加载与校验(pydantic-settings)
 │       │   ├── errors.py          #    统一错误类型层级
 │       │   ├── tenancy.py         #    TenantContext(frozen dataclass,ADR 0012)
-│       │   ├── logging.py         #    结构化日志
-│       │   ├── tracing.py         #    trace 接入点(OpenTelemetry 抽象)
-│       │   ├── registry.py        #    模块注册/装配机制
-│       │   └── types.py           #    跨模块共享的基础类型(无业务语义)
+│       │   ├── logging.py         #    结构化日志(get_logger / configure_logging)
+│       │   ├── factory.py         #    通用实现注册表(impl 名→构造器,ADR 0011)
+│       │   ├── tracing.py         #    trace 接入点(OpenTelemetry 抽象;后续任务落地)
+│       │   └── types.py           #    跨模块共享的基础类型(无业务语义;后续任务落地)
 │       │
 │       ├── modules/               # L1 infra 模块:每个自包含、互不依赖内部
 │       │   └── memory/            #    记忆模块(第一批实现)
@@ -84,12 +84,30 @@ kairos-agent-infra/
 
 ## 配置管理
 
-**单一配置入口,分层结构,实现选择全部走配置。** 用 `pydantic-settings`:配置即带校验的数据模型。
+**单一配置入口,分层结构,实现选择全部走配置。** 用 `pydantic-settings`:配置即带校验的数据模型,支持多来源分层加载。
+
+**加载来源与优先级(由高到低):**
+
+```
+环境变量  >  .env  >  项目 ./.kairos/config.toml  >  全局 ~/.kairos/config.toml  >  代码默认值
+```
+
+配置文件用 **TOML**(ADR 0018):支持注释、适合手改、Python 3.13 标准库 `tomllib` 直读零依赖;各作用域共用同一 `KairosSettings` schema(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源由 `KairosSettings.settings_customise_sources` 装配。
 
 ```python
 # foundation/config.py(草案)
+from pathlib import Path
+
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
+
+PROJECT_CONFIG_FILE = Path(".kairos/config.toml")
+USER_CONFIG_FILE = Path.home() / ".kairos" / "config.toml"
 
 
 class VectorStoreConfig(BaseModel):
@@ -137,20 +155,31 @@ class KairosSettings(BaseSettings):
         env_prefix="KAIROS_",
         env_nested_delimiter="__",       # KAIROS_VECTOR_STORE__URI=...
         env_file=".env",
+        extra="ignore",
     )
     # 注:记忆相关配置(vector_store/embedding/rerank/memory)目前直接挂在顶层。
     # 未来出现第二个模块、配置确有交叉时,再决定是否按模块分组,不提前。
+    # 模型(ChatModel)配置由 model_gateway 任务落地。
     vector_store: VectorStoreConfig = VectorStoreConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     rerank: RerankConfig = RerankConfig()
     memory: MemoryConfig = MemoryConfig()
     log_level: str = "INFO"
     trace_enabled: bool = False
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings,
+                                   dotenv_settings, file_secret_settings):
+        # 靠前者优先:环境变量 > .env > 项目 TOML > 用户 TOML > 代码默认值
+        toml = [TomlConfigSettingsSource(settings_cls, toml_file=p)
+                for p in (PROJECT_CONFIG_FILE, USER_CONFIG_FILE) if p.is_file()]
+        return (init_settings, env_settings, dotenv_settings, *toml, file_secret_settings)
 ```
 
 约定:
 
 - **实现选择是配置项**(`impl`),不是代码分支。模块的 factory 读 `impl` 决定实例化哪个类。
+- **接自己的模型/端点走配置**:openai_compat 一个实现吃 OpenAI 及一切兼容端点(vLLM/Ollama/国产厂商),用户在 `.kairos/config.toml` 配 `base_url + model + api_key_env` 即可,零改码。
 - **密钥永不进配置值**,只存环境变量名(`api_key_env`),运行时按名读取。不在配置文件、不在日志出现明文。
 - **`dim` 一致性**:embedding 维度必须等于向量列维度,启动校验,不一致 fail-fast。
 
@@ -162,10 +191,19 @@ class KairosSettings(BaseSettings):
 # foundation/tenancy.py(草案)
 from dataclasses import dataclass
 
-@dataclass(frozen=True)
+from kairos.foundation.errors import ValidationError
+
+@dataclass(frozen=True, slots=True)
 class TenantContext:
     tenant_id: str    # 信任边界(API Key per tenant,ADR 0010);记忆表按此物理分表(ADR 0013)
     user_id: str      # 同租户内实体归属;记忆表内 owner_id 过滤
+
+    def __post_init__(self) -> None:
+        # 空作用域构造期即 fail-closed(ADR 0009),不等到检索才暴露
+        if not self.tenant_id:
+            raise ValidationError("TenantContext.tenant_id 不能为空")
+        if not self.user_id:
+            raise ValidationError("TenantContext.user_id 不能为空")
 ```
 
 - **唯一构造点在 server 认证中间件**(ADR 0010),向下**显式传参**贯穿全栈,禁用 contextvar 隐式传递(ADR 0012)。
@@ -191,8 +229,14 @@ def reciprocal_rank_fusion(runs: list[list[str]]) -> list[...]: ...     # 纯计
 
 ```python
 # foundation/errors.py(草案)
+from typing import Any
+
 class KairosError(Exception):
-    """所有 Kairos 错误的基类。"""
+    """所有 Kairos 错误的基类;携带 message 与可选结构化 details(仅元数据,禁明文/密钥)。"""
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
 
 class ConfigError(KairosError):
     """配置缺失/非法。启动时抛,fail-fast。"""
@@ -201,11 +245,15 @@ class ValidationError(KairosError):
     """调用方输入非法(对应未来 HTTP 422)。"""
 
 class ProviderError(KairosError):
-    """外部 Provider(embedding/rerank/向量库)调用失败(对应 5xx)。
-    统一封装底层异常,调用方不直接看到 openai/lancedb 的原始异常。"""
+    """外部 Provider(embedding/rerank/向量库/模型)调用失败(对应 5xx)。
+    统一封装底层异常,调用方不直接看到 openai/lancedb 的原始异常。
+    provider: 出错方标识;retryable: 供 model_gateway 决定重试/降级(见 model-gateway §3);
+    cause: 被封装的原始异常(保留为 __cause__)。"""
+    def __init__(self, message, *, provider, retryable=False, cause=None, details=None): ...
 
 class NotConfiguredError(KairosError):
-    """选了需要某组件的能力,但该组件未配置;带明确配置指引。"""
+    """选了需要某组件的能力,但该组件未配置;hint 给出明确配置修复指引。"""
+    def __init__(self, message, *, hint=None, details=None): ...
 ```
 
 约定:
@@ -224,14 +272,18 @@ class NotConfiguredError(KairosError):
 
 ### 结构化日志
 
+`foundation/logging.py` 提供统一工厂:`configure_logging(level)` 装配根 logger 输出单行 JSON(`StructuredFormatter`),`get_logger(name)` 取命名空间 logger;业务字段经 `extra` 平铺:
+
 ```python
-logger.info("memory.recall", extra={
-    "trace_id": ctx.trace_id, "kind": "semantic", "method": "hybrid",
-    "n_candidates": 42, "latency_ms": 18.3,
+from kairos.foundation.logging import get_logger
+
+logger = get_logger("memory.recall")
+logger.info("recall", extra={
+    "kind": "semantic", "method": "hybrid", "n_candidates": 42, "latency_ms": 18.3,
 })
 ```
 
-统一 logger 工厂与字段命名。**绝不记录记忆内容明文与密钥**,只记元数据(数量、耗时、kind);涉及内容只记 id 或哈希前缀。
+统一 logger 工厂与字段命名。**绝不记录记忆内容明文与密钥**,只记元数据(数量、耗时、kind);涉及内容只记 id 或哈希前缀。(trace 关联 id 由 tracing 接入点产出,不放 `TenantContext`。)
 
 ### Trace 接入点
 

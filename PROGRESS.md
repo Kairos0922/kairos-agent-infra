@@ -25,7 +25,7 @@
 
 > 详见 [roadmap Phase 2](./docs/project/roadmap.md)。验收:CLI 完成一次"带记忆的多轮对话"完整 run。
 
-- [ ] foundation:tenancy / config / errors / logging / factory 落地
+- [x] foundation:tenancy / config / errors / logging / factory 落地
 - [ ] model_gateway:ChatModel(openai_compat)+ tier 路由(strong/fast)+ 基础重试
 - [ ] observability:StepSink + TraceQuery 最小实现(SQLite)
 - [ ] harness/loop + harness/context:状态机 + 分区组装(压缩/scope 推断最简版)
@@ -57,6 +57,8 @@ MCP 全面接入 · PPT 渲染(sandbox)· 多学科横向扩展 · tenant 级知
 
 ## 变更记录
 
+- 2026-07-05 **foundation config/errors 重设计**(复核后发现两处不足)。① `errors.py`:从空异常类升级为携带信息的错误——基类 `KairosError(message, *, details)`;`ProviderError` 增 `provider`/`retryable`/`cause`(满足 model-gateway §3 重试判定与底层异常封装);`NotConfiguredError` 增 `hint` 配置指引;② `config.py`:补 **TOML 配置文件层**,双层级联项目盖全局——项目 `./.kairos/config.toml` 覆盖全局 `~/.kairos/config.toml`(同 `.kairos/` 命名空间,`.gitignore` 改 `.kairos/*` + `!.kairos/config.toml` 放行配置、忽略运行时数据);各作用域共用同一 KairosSettings schema,字段天然一致;加载优先级 环境变量 > .env > 项目 config > 全局 config > 默认;openai_compat 用户配 base_url+model+api_key_env 即可接自有模型,零改码。模型(ChatModel)配置按决策留给 model_gateway 任务;③ **ADR 0018**(配置文件用 TOML):经 web 核实两家一流 Agent 格式分歧——Claude Code=JSON(三级级联)、Codex=TOML,按"给人手改的阈值/provider 配置需注释自解释"这一主场景选 TOML(与 Codex 同侧,诚实记录放弃 JSON 的 IDE-Schema 补全),含来源链接;更新 ADR README、docs/README ADR 摘要;④ `factory.py` 未知 impl 错误改用 `hint` 承载已注册清单;⑤ 补 `tests/unit/test_config.py`(文件分层/优先级)+ test_foundation `TestErrors`,共 27 项全过,foundation 覆盖率≥91%;⑥ 文档:foundation.md 配置管理(加载优先级+TOML+双层路径)、错误处理(新签名)、结构化日志(对齐 get_logger、去除不存在的 ctx.trace_id)同步。
+- 2026-07-05 **Phase 2 起步:foundation tenancy/logging/factory 落地**。① `tenancy.py`:`TenantContext(tenant_id, user_id)` frozen+slots dataclass,构造期空作用域 fail-closed(ADR 0009);② `logging.py`:`StructuredFormatter`(单行 JSON)+ `configure_logging`(幂等)+ `get_logger`,标注不落内容明文/密钥红线;③ `factory.py`:通用 `Registry[T]` 实现注册表(impl 名→构造器,重复注册抛 ConfigError、未知 impl 抛 NotConfiguredError,ADR 0011);④ `config.py`/`errors.py` 已于 Phase 1 骨架完成,本轮未改;⑤ 补 `tests/unit/test_foundation.py`(17 项全过,foundation 覆盖率≥91%);⑥ 文档对齐:`foundation.md` 目录 `registry.py`→`factory.py`、tenancy 草案补 fail-closed 守卫、tracing/types 标注后续任务落地。tracing.py/types.py 按 YAGNI 暂不落地。
 - 2026-07-05 **项目统一重构(V1→V2 六层架构)**:以 V2 六层架构为唯一事实源,全面取代旧三层表述。① `V2/docs/` 全部并入统一 `docs/` 树(protocol/harness/assembly/verticals + model-gateway/tools/knowledge/observability/eval),删除 `V2/`;② 落实 S16 演练三处回改(context §5.1 scope 推断、loop 文本即 FINISHED、SessionMeta.scope + set_session_scope);③ **S10 memory 四件套定稿**:接口首参 `ctx: TenantContext`、DTO 零租户字段、租户物理分表 `{tenant_id}__{kind}`、MetadataFilter 等值下推、MemorySource 写入来源、通用 scope metadata(去 namespace 列/tags)、按 namespace 独立淘汰、procedural 生产者定为 harness/distill;④ ADR 0010–0017 建档(认证/模型契约归属/TenantContext 显式传参/租户物理分表/六层命名+import-linter/向量存储上提/subagent 为工具/scope 推断),0006/0007/0008 加术语更新追记、0009 加物理实现更新追记,重建 ADR 索引;⑤ 全仓旧三层术语替换为六层;规范文件(README/AGENTS/PROGRESS)改写,AGENTS 增命名硬规则 + 常用命令;⑥ roadmap 改为 Phase 1–5。
 
 <!-- 历史变更(V1 阶段,2026-06-27)见 git log;为保持 PROGRESS 聚焦当前,不在此逐条保留。 -->

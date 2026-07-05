@@ -25,6 +25,7 @@
 | [0015](./0015-vector-store-uplift-foundation.md) | 向量存储契约与 RRF 融合上提 foundation(Phase 3) | 已接受(Phase 3 触发) |
 | [0016](./0016-subagent-as-tool-call.md) | Sub-agent 统一建模为工具调用(父子式,禁自由拓扑) | 已接受 |
 | [0017](./0017-scope-metadata-inference.md) | Scope Metadata 推断规则与降级语义 | 已接受 |
+| [0018](./0018-config-file-format-toml.md) | 配置文件格式选用 TOML(项目级 + 用户级双层) | 已接受 |
 
 ## 状态说明
 
