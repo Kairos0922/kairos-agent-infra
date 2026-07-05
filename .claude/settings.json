@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(python3 tools/check_doc_links.py)",
+      "WebSearch"
+    ],
+    "defaultMode": "auto"
+  }
+}

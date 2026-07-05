@@ -24,3 +24,6 @@ build/
 .DS_Store
 .idea/
 .vscode/
+
+# Claude Code:共享配置(settings.json)入库,本地个人配置不入库
+.claude/settings.local.json
