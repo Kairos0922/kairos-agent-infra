@@ -139,7 +139,7 @@ impl Default for MemoryConfig {
 ///
 /// 记忆相关配置目前直接挂在顶层。未来出现第二个模块、配置确有交叉时,再决定是否按模块
 /// 分组,不提前(YAGNI)。模型(ChatModel)配置由 model_gateway 任务落地。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KairosSettings {
     pub vector_store: VectorStoreConfig,
@@ -150,10 +150,10 @@ pub struct KairosSettings {
     pub trace_enabled: bool,
 }
 
-// log_level 的默认值:KairosSettings 派生 Default 会对 String 用 ""，故单独实现顶层默认。
-// 通过给字段包一层无法直接标注默认字符串,这里改为在 Default 里手动给出。
-impl KairosSettings {
-    fn with_defaults() -> Self {
+// 不派生 Default:派生会对 log_level 给出空串 ""，与期望的 "INFO" 不符。手写单一真相源,
+// 避免"派生 Default 返回空串、加载路径另用一份默认"的双份默认陷阱。
+impl Default for KairosSettings {
+    fn default() -> Self {
         Self {
             vector_store: VectorStoreConfig::default(),
             embedding: EmbeddingConfig::default(),
@@ -195,7 +195,7 @@ impl Default for LoadOptions {
 /// TOML 解析失败或字段类型非法时返回 [`KairosError::Config`],fail-fast。
 pub fn load_settings(opts: &LoadOptions) -> Result<KairosSettings, KairosError> {
     // 以顶层默认值作为最底层,逐层用更高优先级来源覆盖。
-    let mut merged = to_value(&KairosSettings::with_defaults())?;
+    let mut merged = to_value(&KairosSettings::default())?;
 
     // 全局 TOML → 项目 TOML(后者覆盖前者)。
     merge_into(&mut merged, load_toml_file(&opts.user_config_file)?);
@@ -378,6 +378,12 @@ mod tests {
         let unique = base.join(format!("{:p}", &base));
         std::fs::create_dir_all(&unique).unwrap();
         unique
+    }
+
+    #[test]
+    fn default_impl_uses_info_not_empty() {
+        // 守护单一真相源:Default 必须给出 "INFO" 而非派生的空串。
+        assert_eq!(KairosSettings::default().log_level, "INFO");
     }
 
     #[test]

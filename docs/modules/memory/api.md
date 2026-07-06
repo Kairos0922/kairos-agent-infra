@@ -225,20 +225,20 @@ A/B 裁决是 Phase 2 末尾的 [eval 挂账任务](../eval.md)。
 
 | 内部错误 | 处理 | 对调用方含义 | server 层 HTTP 映射 |
 |---------|-----|-------------|------------------|
-| `ValidationError` | 直接抛 | 你的输入有问题 | 422 |
-| `NotConfiguredError` | 直接抛,带配置指引 | 服务没配好这能力 | 500(配置) |
-| `ProviderError` | 记录 + 抛 | 外部依赖出错,可重试 | 502/503 |
-| `ConfigError` | 启动时抛,fail-fast | 部署配置错误 | 启动失败 |
+| `KairosError::Validation` | 直接抛 | 你的输入有问题 | 422 |
+| `KairosError::NotConfigured` | 直接抛,带配置指引 hint | 服务没配好这能力 | 500(配置) |
+| `KairosError::Provider` | 记录 + 抛(带 `retryable`) | 外部依赖出错,可重试 | 502/503 |
+| `KairosError::Config` | 启动时抛,fail-fast | 部署配置错误 | 启动失败 |
 
 约定:底层 `lancedb`/`openai` 原始异常**绝不**穿透——全在
-provider 层封装成 `ProviderError`(既定铁律,见
+provider 层封装成 `KairosError::Provider`(既定铁律,见
 [foundation](../../foundation/foundation.md))。HTTP 映射由
 server 层统一执行,模块只抛类型化错误。
 
 > **作用域强制(ADR 0009/0013)**:租户隔离由 provider 层
 > **物理分表路由**(`{tenant_id}__{kind}`)+ 表内 `owner_id`
 > 强制过滤实现,过滤在 provider 内部注入,调用方无法绕过;
-> ctx 缺失/无效 → fail-closed 抛 `ValidationError`,绝不返回全量。
+> ctx 缺失/无效 → fail-closed 抛 `KairosError::Validation`,绝不返回全量。
 > 落为契约测试(隔离三连,见 [retrieval §作用域隔离](./retrieval.md#作用域隔离每次检索必带作用域缺则拒绝))。
 
 ## 端到端使用示例(harness 视角)

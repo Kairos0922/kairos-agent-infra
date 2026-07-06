@@ -61,4 +61,4 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: 覆盖率(foundation 核心模块门槛 80%)
-        run: cargo llvm-cov --package kairos-foundation --fail-under-lines 80
+        run: cargo llvm-cov --package kairos_foundation --fail-under-lines 80

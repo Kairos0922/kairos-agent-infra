@@ -93,7 +93,7 @@ kairos-agent-infra/
 环境变量  >  .env  >  项目 ./.kairos/config.toml  >  全局 ~/.kairos/config.toml  >  代码默认值
 ```
 
-配置文件用 **TOML**(ADR 0018,Rust 下 TOML 为一等公民):支持注释、适合手改;`toml` crate 解析 + `serde` 反序列化到强类型结构体。各作用域共用同一 `KairosSettings` 结构(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源分层合并(可用 `figment`)后反序列化。
+配置文件用 **TOML**(ADR 0018,Rust 下 TOML 为一等公民):支持注释、适合手改;`toml` crate 解析 + `serde` 反序列化到强类型结构体。各作用域共用同一 `KairosSettings` 结构(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源以 `toml::Value` 为中间态深合并(高优先级覆盖低优先级)后反序列化到强类型结构体。
 
 ```rust
 // foundation/src/config.rs(节选)
