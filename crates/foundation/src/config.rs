@@ -201,13 +201,14 @@ pub fn load_settings(opts: &LoadOptions) -> Result<KairosSettings, KairosError> 
     merge_into(&mut merged, load_toml_file(&opts.user_config_file)?);
     merge_into(&mut merged, load_toml_file(&opts.project_config_file)?);
 
-    // .env → 真实环境变量(后者覆盖前者)。
-    merge_into(&mut merged, env_to_value(&load_dotenv(&opts.env_file)));
+    // .env → 真实环境变量(后者覆盖前者)。环境变量值天生是字符串,
+    // 按默认值基底的既有字段类型做强制转换(见 merge_env_into),避免"像数字的字符串"被误判。
+    merge_env_into(&mut merged, env_to_value(&load_dotenv(&opts.env_file)));
     let env_pairs = match &opts.env {
         Some(pairs) => pairs.clone(),
         None => std::env::vars().collect(),
     };
-    merge_into(&mut merged, env_to_value(&env_pairs));
+    merge_env_into(&mut merged, env_to_value(&env_pairs));
 
     merged.try_into().map_err(|e: toml::de::Error| {
         KairosError::config("配置校验失败").with_detail("reason", e.to_string())
@@ -284,13 +285,14 @@ fn env_to_value(env: &[(String, String)]) -> Value {
     Value::Table(root)
 }
 
-/// 按路径把标量值插入嵌套表;中间层缺失则创建。值统一以字符串写入,由 serde 反序列化时按目标类型解析。
+/// 按路径把标量值插入嵌套表;中间层缺失则创建。值统一以**字符串**写入;真实类型转换
+/// 推迟到 [`merge_env_into`]——那里能对照默认值基底的既有类型,避免在不知目标 schema 时盲猜。
 fn insert_nested(table: &mut toml::value::Table, path: &[String], value: &str) {
     let Some((head, tail)) = path.split_first() else {
         return;
     };
     if tail.is_empty() {
-        table.insert(head.clone(), parse_scalar(value));
+        table.insert(head.clone(), Value::String(value.to_string()));
         return;
     }
     let entry = table
@@ -304,21 +306,6 @@ fn insert_nested(table: &mut toml::value::Table, path: &[String], value: &str) {
         insert_nested(&mut inner, tail, value);
         *entry = Value::Table(inner);
     }
-}
-
-/// 把环境变量字符串解析为合适的 TOML 标量(bool / integer / float / string),
-/// 使 serde 能反序列化到强类型字段(如 dim: u32)。
-fn parse_scalar(s: &str) -> Value {
-    if let Ok(b) = s.parse::<bool>() {
-        return Value::Boolean(b);
-    }
-    if let Ok(i) = s.parse::<i64>() {
-        return Value::Integer(i);
-    }
-    if let Ok(f) = s.parse::<f64>() {
-        return Value::Float(f);
-    }
-    Value::String(s.to_string())
 }
 
 /// 深合并:`source` 覆盖 `target`,同为表则递归合并,否则直接覆盖。
@@ -335,6 +322,51 @@ fn merge_into(target: &mut Value, source: Value) {
             }
         }
         (t, s) => *t = s,
+    }
+}
+
+/// 环境变量专用的深合并:`source` 的标量值均为字符串(见 [`insert_nested`]),
+/// 合并时按 `target` 同位置的**既有类型**做强制转换,使 `dim=768` 解析为整数、
+/// 而 `model=123` 这类字符串字段原样保留字符串——修掉"像数字的字符串被误判"的陷阱。
+///
+/// `target` 来自默认值基底([`KairosSettings::default`] 序列化),因此每个已知字段
+/// 在此都有正确类型可依据;未知字段(基底不存在)回退为原字符串,交由 serde 兜底报错。
+fn merge_env_into(target: &mut Value, source: Value) {
+    match (target, source) {
+        (Value::Table(t), Value::Table(s)) => {
+            for (k, v) in s {
+                match t.get_mut(&k) {
+                    Some(existing) => merge_env_into(existing, v),
+                    None => {
+                        t.insert(k, v);
+                    }
+                }
+            }
+        }
+        // source 恒为字符串标量:按 target 既有类型强制转换。
+        (t, Value::String(s)) => *t = coerce_str_to(t, &s),
+        (t, s) => *t = s,
+    }
+}
+
+/// 按 `target` 的既有 TOML 类型把字符串 `s` 强制为对应标量;类型不匹配或无法解析时
+/// 保留字符串原样(交由 serde 反序列化按目标字段类型给出精确错误)。
+fn coerce_str_to(target: &Value, s: &str) -> Value {
+    match target {
+        Value::Boolean(_) => s
+            .parse::<bool>()
+            .map(Value::Boolean)
+            .unwrap_or_else(|_| Value::String(s.to_string())),
+        Value::Integer(_) => s
+            .parse::<i64>()
+            .map(Value::Integer)
+            .unwrap_or_else(|_| Value::String(s.to_string())),
+        Value::Float(_) => s
+            .parse::<f64>()
+            .map(Value::Float)
+            .unwrap_or_else(|_| Value::String(s.to_string())),
+        // String 及其他类型:原样保留字符串。
+        _ => Value::String(s.to_string()),
     }
 }
 
@@ -495,6 +527,21 @@ mod tests {
             load_settings(&opts),
             Err(KairosError::Config { .. })
         ));
+    }
+
+    #[test]
+    fn string_field_keeps_numeric_looking_value() {
+        // 回归:字符串字段的值恰好像数字/布尔字面量时,不得被误判类型。
+        // 类型强制按默认值基底的既有类型进行——String 字段原样保留字符串。
+        let dir = tmpdir();
+        let mut opts = opts_in(&dir);
+        opts.env = Some(env_pairs(&[
+            ("KAIROS_EMBEDDING__MODEL", "123"),
+            ("KAIROS_VECTOR_STORE__IMPL", "true"),
+        ]));
+        let s = load_settings(&opts).unwrap();
+        assert_eq!(s.embedding.model, "123"); // 不被转成 Integer 而致反序列化失败
+        assert_eq!(s.vector_store.r#impl, "true"); // 不被转成 Boolean
     }
 
     #[test]
