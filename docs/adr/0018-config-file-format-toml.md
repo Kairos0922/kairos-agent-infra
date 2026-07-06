@@ -2,7 +2,7 @@
 
 - **状态**:已接受
 - **日期**:2026-07-05
-- **相关文档**:[foundation/foundation.md](../foundation/foundation.md)、[modules/model_gateway.md](../modules/model_gateway.md)
+- **相关文档**:[foundation/foundation.md](../foundation/foundation.md)、[modules/model-gateway.md](../modules/model-gateway.md)
 - **上位关系**:是 foundation 配置机制的具体化;为 model_gateway 的 tier 路由表(per-deployment 可覆写)提供承载格式。
 
 ## 背景
@@ -45,7 +45,7 @@
 - `foundation/config.py`:`KairosSettings` 增 `settings_customise_sources`,装配 TOML 双层来源;`PROJECT_CONFIG_FILE=.kairos/config.toml`、`USER_CONFIG_FILE=~/.kairos/config.toml` 路径常量。
 - `.gitignore`:`.kairos/` 改为 `.kairos/*` + `!.kairos/config.toml`,使项目配置可提交而运行时数据仍忽略。
 - model_gateway 任务落地时,tier 路由表以 TOML 表结构承载(per-deployment / 行业部署覆写走项目级文件)。
-- model_gateway.md 中的 YAML 路由表示例为**说明性**,落地时以 TOML 表达(该文档在 model_gateway 任务时同步)。
+- model-gateway.md 中的 YAML 路由表示例为**说明性**,落地时以 TOML 表达(该文档在 model_gateway 任务时同步)。
 - 文档:foundation.md 配置管理节更新加载优先级与来源装配。
 
 ## 追记(2026-07-06,ADR 0019/0021 语言迁移)

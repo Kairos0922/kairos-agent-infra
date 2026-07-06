@@ -2,7 +2,7 @@
 
 - **状态**:已接受
 - **日期**:2026-07-05
-- **相关文档**:[modules/model_gateway.md](../modules/model_gateway.md)、[modules/memory/retrieval.md](../modules/memory/retrieval.md)、[project/architecture.md](../project/architecture.md)
+- **相关文档**:[modules/model-gateway.md](../modules/model-gateway.md)、[modules/memory/retrieval.md](../modules/memory/retrieval.md)、[project/architecture.md](../project/architecture.md)
 - **上位关系**:是 [ADR 0003](./0003-abstractions-in-module.md)(抽象归模块、按需上提)在"模型能力"这一横切关注点上的具体化;与 [ADR 0015](./0015-vector-store-uplift-foundation.md)(向量存储上提)采用同一"出现第二消费者再上提"判据。
 
 ## 背景

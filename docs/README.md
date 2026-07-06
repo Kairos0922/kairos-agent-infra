@@ -18,7 +18,7 @@ docs/
 ├── modules/        # L1 infra 模块(自包含,互不感知)
 │   ├── memory/          # 记忆(第一批实现,含检索层/模型抽象/API/取舍)
 │   ├── benchmark/       # 记忆专项评测(协议 + 中文数据集规范)
-│   ├── model_gateway.md # 模型网关(tier 路由/降级/记账)
+│   ├── model-gateway.md # 模型网关(tier 路由/降级/记账)
 │   ├── tools.md         # 工具(内置/MCP/Skill 脚本三源)
 │   ├── knowledge.md     # 资料型知识(与记忆的"经验"分立)
 │   ├── observability.md # Step 即 trace 即 checkpoint
@@ -39,6 +39,7 @@ docs/
 | [overview](./project/overview.md) | 愿景、核心命题、系统形态、设计原则、Non-goals、阶段目标 |
 | [architecture](./project/architecture.md) | 六层分层、各层职责与边界、租户模型、一次 run 的数据流 |
 | [roadmap](./project/roadmap.md) | Phase 1–5 目标/交付/验收、项目级风险 |
+| [retrospective](./project/retrospective.md) | 历次任务复盘与可迁移协作经验 |
 
 ### 对外协议 [`protocol/`](./protocol/)
 
@@ -77,7 +78,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [model_gateway](./modules/model_gateway.md) | ChatModel/ModelRouter 契约、tier 路由(strong/fast/cheap)、降级链、按租户记账 |
+| [model_gateway](./modules/model-gateway.md) | ChatModel/ModelRouter 契约、tier 路由(strong/fast/cheap)、降级链、按租户记账 |
 | [tools](./modules/tools.md) | ToolSpec/Registry/Executor、内置工具、MCP 集成、权限模型、Skill 脚本 |
 | [knowledge](./modules/knowledge.md) | KnowledgePack/KnowledgeRetriever,资料型知识(与记忆的"经验"分立) |
 | [observability](./modules/observability.md) | StepSink/TraceQuery,Step 即 trace 即 checkpoint |
