@@ -2,6 +2,8 @@
 
 > 本文是对参考项目 [EverOS](https://github.com/EverMind-AI/EverOS) 的实际源码分析,作为 Kairos 记忆模块设计取舍的依据。
 > **所有结论基于实际克隆的源码**(commit `b7d15f7`,`git clone --depth 1`),非凭印象。私有依赖包的内部实现拿不到,已明确标注。
+>
+> **注**:本文引用的 `.py` 文件名、`Protocol`/`async def` 代码块、snake_case 字段均为 **EverOS 自身的 Python 源码原貌**,如实保留、不改写为 TypeScript——它们描述的是外部项目,不是 Kairos 的实现。Kairos 侧的对应物(§F 借鉴表右列链接的文档)已随本项目切换为 TypeScript。
 
 ## A. 仓库实况
 

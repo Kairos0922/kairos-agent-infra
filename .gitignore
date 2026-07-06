@@ -1,16 +1,13 @@
-# Python / uv
-.venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-coverage.xml
+# Rust / Cargo
+/target/
+**/*.rs.bk
+
+# Node / pnpm / TypeScript(仅 apps/ui 等 L5 客户端)
+node_modules/
 dist/
 build/
+*.tsbuildinfo
+coverage/
 
 # 本地数据(LanceDB 默认存储目录等运行时数据);放行项目配置文件 config.toml
 .kairos/*

@@ -11,33 +11,54 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   verify:
-    name: 验证链(lint + 类型 + 依赖方向 + 测试)
+    name: 验证链(fmt + clippy + 测试 + crate 边界)
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
-      - name: 安装 uv
-        uses: astral-sh/setup-uv@v8.2.0
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
         with:
-          enable-cache: true
+          components: rustfmt, clippy
 
-      - name: 安装依赖(按 uv.lock 锁定版本)
-        run: uv sync --locked
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
 
-      - name: ruff 格式检查
-        run: uv run ruff format --check .
+      - name: 格式检查
+        run: cargo fmt --all -- --check
 
-      - name: ruff lint
-        run: uv run ruff check .
+      - name: Clippy(告警即失败;crate 依赖边界由编译强制)
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: mypy 类型检查(strict)
-        run: uv run mypy
+      - name: 测试
+        run: cargo test --all --all-features
 
-      - name: import-linter 依赖方向检查
-        run: uv run lint-imports
+      - name: 文档链接与锚点检查
+        run: cargo xtask check-docs
 
-      - name: pytest + 覆盖率
-        run: uv run pytest --cov
+  coverage:
+    name: 覆盖率(核心模块 ≥80%)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: 缓存 Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: 安装 cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: 覆盖率(foundation 核心模块门槛 80%)
+        run: cargo llvm-cov --package kairos-foundation --fail-under-lines 80

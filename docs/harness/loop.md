@@ -42,35 +42,40 @@ Loop Engine 是 harness 层核心:以显式状态机驱动 agent 主循环。
 
 Step 是三位一体:**trace 单元、checkpoint 单元、事件重建源**。
 
-```python
-class Step(BaseModel, frozen=True):
-    run_id: str
-    agent_path: str            # "root" 或 "root/0/1"
-    turn: int                  # 从 1 起
-    context_digest: ContextDigest  # 分区组装的摘要与哈希,非全文
-    model_call: ModelCallRecord    # tier、实际模型、请求哈希、输出、usage
-    tool_calls: list[ToolCallRecord]  # call_id/名称/参数(服务端全文)/结果/状态/耗时
-    stop_reason: StopReason
-    budget_snapshot: BudgetSnapshot   # 本轮结束时预算余量
-    started_at: datetime
-    ended_at: datetime
+```rust
+// 不可变:构造后字段只读(无 pub setter),一轮一条
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Step {
+    pub run_id: String,
+    pub agent_path: String,               // "root" 或 "root/0/1"
+    pub turn: u32,                        // 从 1 起
+    pub context_digest: ContextDigest,    // 分区组装的摘要与哈希,非全文
+    pub model_call: ModelCallRecord,      // tier、实际模型、请求哈希、输出、usage
+    pub tool_calls: Vec<ToolCallRecord>,  // call_id/名称/参数(服务端全文)/结果/状态/耗时
+    pub stop_reason: StopReason,
+    pub budget_snapshot: BudgetSnapshot,  // 本轮结束时预算余量
+    pub started_at: DateTime<Utc>,        // 时间类型用 chrono::DateTime<Utc>
+    pub ended_at: DateTime<Utc>,
+}
 ```
 
 - 写入:OBSERVE 末尾(或 ROUTE 直达 FINISHED 前)经 StepSink 落盘,
   **写入成功才进入下一轮**(checkpoint 语义优先于吞吐)。
 - 明文边界:Step 含工具完整参数与模型输出(服务端侧),
-  但 context_digest 不含记忆/知识明文,只含各分区的 id 列表与哈希。
+  但 contextDigest 不含记忆/知识明文,只含各分区的 id 列表与哈希。
   脱敏后的 summary 才进入对客户端的事件。
 
 ## 3. 预算树(Budget)
 
-```python
-class Budget(BaseModel):
-    max_turns: int          # 默认 20
-    max_tokens: int         # in+out 合计
-    max_cost: Decimal       # 按 model_gateway 记账口径
-    deadline: datetime | None
-    wrap_up_reserve: float = 0.1   # 预留 10% token 用于 WRAP_UP
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Budget {
+    pub max_turns: u32,               // 默认 20
+    pub max_tokens: u64,              // in+out 合计
+    pub max_cost: f64,                // 按 model_gateway 记账口径
+    pub deadline: Option<DateTime<Utc>>,
+    pub wrap_up_reserve: f64,         // 默认 0.1,预留 10% token 用于 WRAP_UP
+}
 ```
 
 - 检查点:每次进入 ASSEMBLE 前检查;任一维度剩余 ≤ reserve
@@ -82,12 +87,12 @@ class Budget(BaseModel):
 ## 4. Loop Policy(来自 Profile,run 级只读)
 
 ```yaml
-loop_policy:
-  model_tier: strong          # strong│fast│cheap → 路由表映射
-  budget: {max_turns: 20, max_tokens: 200000, max_cost: "1.00"}
+loopPolicy:
+  modelTier: strong          # strong│fast│cheap → 路由表映射
+  budget: {maxTurns: 20, maxTokens: 200000, maxCost: "1.00"}
   reflection: off             # v1 保留字段,见 §7 暂缓
-  approval_timeout: 10m       # 超时按 denied 处理(S3 已定)
-  verbose_subagent_events: false
+  approvalTimeout: 10m        # 超时按 denied 处理(S3 已定)
+  verboseSubagentEvents: false
 ```
 
 ## 5. 错误语义(分三类,不混淆)

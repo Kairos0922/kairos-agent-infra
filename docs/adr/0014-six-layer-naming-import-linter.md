@@ -51,7 +51,20 @@
 - 命名冻结 + 禁用词表从源头防命名分裂与低内聚。
 - import-linter 把架构纪律变成 CI 门禁,违反即红,不靠人肉 review。
 
-## 影响
+## 追记(2026-07-06,ADR 0019/0021 语言与架构迁移)
+
+分层与依赖方向的**结论不变**(六层单向、L1 独立、harness 禁触 providers 仍是宪法级约定);命名与强制手段随 Rust Runtime 落地更新。
+
+> 说明:本追记先经历一版"切纯 TS(kebab-case + camelCase + dependency-cruiser)"的中间修订,同日又随 ADR 0019 修订为 **Rust Runtime + TS UI**。以下为**最终**(Rust)结论,取代中间的 TS 版本。
+
+- **顶层结构**:`kairos.foundation` 等 Python 包 → Cargo workspace 的六层 **crate**:`crates/foundation`、`crates/{memory,model_gateway,...}`(每个 L1 模块一个 crate)、`crates/harness`、`crates/assembly`、`crates/server`,另加 `crates/protocol`;客户端在 `apps/`(见 ADR 0021)。
+- **命名硬规则 1(命名风格)**:回归 **snake_case**(Rust 官方 RFC 430:crate/包名/module/目录/文件/函数/变量皆 snake_case),与最初 Python 一致;类型/trait/枚举用 PascalCase。**全仓不用 kebab-case**——包名亦 snake(`kairos_model_gateway`),同一概念一个拼法(参照 rustc `rustc_middle` 风格)。TS 侧(L5 客户端)另按 TS/npm 官方(kebab 包名 + camelCase 标识符)。
+- **命名硬规则 2(模块骨架)**:每个 L1 模块 crate 内 `contracts`(trait 定义)、`providers`(实现)两个 mod 强制命名;工厂为 `factory.rs`/`factory` mod。
+- **命名硬规则 3(契约)**:契约用能力名词的 **trait**(`ChatModel`、`ToolRegistry`、`SessionStore`),不加 `Abstract`/`Base`/`I` 前缀;实现类型 = `<技术名><契约名>`(`LanceDbVectorStore`)。
+- **命名硬规则 4(DTO)**:Pydantic → **serde 结构体**(`#[derive(Serialize/Deserialize)]`);禁裸 map 跨层传递不变。跨进程 DTO(agent-events / 控制 API)字段命名以协议 wire 格式为准(见 protocol/agent-events),Rust 侧用 `#[serde(rename_all)]` 映射。
+- **强制工具**:import-linter → **Cargo crate 依赖边界**:下层 crate 不声明上层为依赖 → 上层符号物理不可见,违反即**编译失败**(比任何 linter 更硬)。契约三(harness 禁触 providers)用 crate 内 `pub` 可见性 + 架构测试兜底(见 ADR 0021)。禁用词表(`util`/`utils`/`common`/`helper`)、改名即全仓,均不变。
+
+## 影响(原始,Python 阶段)
 
 - 全仓"三层架构/适配层/上层应用层"旧表述替换为六层;删除 `src/kairos/adapter/`。
 - `src/kairos/` 建齐六个顶层包;pyproject.toml 落三契约。

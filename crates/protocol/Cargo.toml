@@ -1,0 +1,14 @@
+# protocol:agent-events + 控制 API 的 Rust 侧类型定义。语言无关的稳定边界,只依赖 serde。
+[package]
+name = "kairos_protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "protocol"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }

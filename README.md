@@ -5,7 +5,7 @@
 - **六层架构**:`foundation`(L0)→ `modules`(L1)→ `harness`(L2)→ `assembly`(L3)→ `server`(L4)→ `cli`(L5),依赖严格单向向下。
 - **核心命题**:新建行业助手不改底座一行代码,只新增 Profile + Skill 包 + 知识包。此命题是全项目持续验收标准。
 - **核心原则**:高内聚低耦合、模块可插拔、契约驱动、避免过度设计(YAGNI)、租户隔离是不变量。
-- **技术栈**:Python 3.13;向量库 LanceDB。
+- **技术栈**:Rust(Agent Runtime,L0–L4 + Adapter,tokio)+ TypeScript(UI/客户端,L5);向量库 LanceDB(`lancedb` crate)。架构见 ADR 0019/0021。
 
 ## 当前状态
 
@@ -18,7 +18,7 @@
 - **改动前先报方案**:任何代码/文档/配置修改,动手前先把方案交用户判断。
 - **任务收尾三同步**:每个任务结束同步更新单元测试、注释、文档,保证三者与实现一致。
 - **进度实时跟进**:[PROGRESS.md](./PROGRESS.md) 是唯一进度事实源。
-- **Definition of Done**:实现 + 测试通过 + 覆盖率达标 + lint/类型/依赖检查 + 三同步 + 进度更新 + 规范提交。
+- **Definition of Done**:实现 + 测试通过 + 覆盖率达标 + cargo fmt/clippy/crate 边界检查 + 三同步 + 进度更新 + 规范提交。
 
 ## 项目结构
 
@@ -27,15 +27,25 @@ kairos-agent-infra/
 ├── AGENTS.md          # Agent 协作规范(唯一事实源,跨工具通用)
 ├── CLAUDE.md          # 薄引用,导入 AGENTS.md
 ├── PROGRESS.md        # 进度事实源
-├── pyproject.toml     # 依赖与工具配置(uv 管理)
-├── src/kairos/        # 源码:foundation / modules / harness / assembly / server / cli
-├── tests/             # 测试:unit / contracts / integration
+├── Cargo.toml         # Rust workspace 根:声明六层 crate 成员
+├── crates/            # Rust Runtime(L0–L4):
+│   ├── foundation/    #   L0 底座
+│   ├── memory/ … model_gateway/ tools/ knowledge/ observability/ eval/  # L1 各模块一个 crate
+│   ├── harness/       #   L2 运行时骨架
+│   ├── assembly/      #   L3 声明式装配
+│   ├── server/        #   L4 控制 API + agent-events + 认证
+│   └── protocol/      #   agent-events + 控制 API 的 Rust 侧类型
+├── apps/              # L5 客户端:
+│   ├── cli/           #   CLI
+│   └── ui/            #   React/TS UI(+ 桌面壳,壳选型暂缓)
+├── packages/
+│   └── protocol-ts/   # 协议类型的 TS 侧定义(与 crates/protocol 对齐)
 └── docs/              # 设计文档与决策记录
     ├── project/       #   整体项目:概述、六层架构、路线
     ├── protocol/      #   对外事件协议
     ├── foundation/    #   L0 底座
     ├── harness/       #   L2 运行时骨架
-    ├── modules/       #   L1 infra 模块(memory / model-gateway / tools / knowledge / observability / eval / benchmark)
+    ├── modules/       #   L1 infra 模块(memory / model_gateway / tools / knowledge / observability / eval / benchmark)
     ├── assembly/      #   L3 声明式装配(profile / skills)
     ├── verticals/     #   垂直样例(education)
     └── adr/           #   架构决策记录

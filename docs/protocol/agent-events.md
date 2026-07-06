@@ -39,13 +39,13 @@ payload 未知字段同样忽略。
 |---|---|
 | run_started | profile_ref, budget(max_turns/max_tokens/deadline) |
 | run_finished | status: completed│budget_exhausted│cancelled, usage(tokens/cost/turns), final_text? |
-| run_error | code, message(用户可读,不含内部堆栈), retryable: bool |
+| run_error | code, message(用户可读,不含内部堆栈), retryable: boolean |
 | heartbeat | (空) |
 
 ### 循环与文本
 | type | payload 要点 |
 |---|---|
-| step_started | turn: int |
+| step_started | turn: number |
 | text_delta | delta: string(助手回复增量) |
 | step_completed | turn, usage(本轮 tokens), stop_reason |
 
@@ -88,9 +88,9 @@ spawned/finished 两端点;Profile 可开 verbose 模式全量转发
   客户端按 §2 忽略规则自然兼容。
 - MAJOR(破坏性):字段改名/删除/语义变更。服务端支持相邻两个
   MAJOR 并行(客户端经 Accept 头协商),旧版本弃用期 ≥ 6 个月。
-- Schema 事实源:所有事件为 Pydantic 模型
-  (kairos/harness/hitl/events.py),JSON Schema 由 CI 自动导出到
-  schemas/agent-events/,与文档不一致视为 CI 失败。
+- Schema 事实源:所有事件为 serde 结构体 + `#[serde(tag = "type")]`
+  区分变体(crates/harness/src/hitl/events.rs),JSON Schema 由 CI
+  经 schemars 自动导出到 schemas/agent-events/,与文档不一致视为 CI 失败。
 
 ## 5. 脱敏不变量(与合规策略联动)
 

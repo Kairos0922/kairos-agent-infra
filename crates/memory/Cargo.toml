@@ -1,0 +1,16 @@
+# memory(L1):记忆模块。只依赖 foundation(六层契约二:L1 模块间零依赖)。
+[package]
+name = "kairos_memory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "memory"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+serde_json = { workspace = true }
+async-trait = { workspace = true }

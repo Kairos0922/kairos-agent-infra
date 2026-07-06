@@ -2,24 +2,38 @@
 
 ## 1. 分层总览
 
-L5 客户端(cli / 行业APP) ── REST+SSE ──┐
-L4 server    认证/会话API/事件推送/配额  │ TenantContext 唯一构造点
-L3 assembly  Profile/Skill/Registry     │ 声明式,无运行时逻辑
-L2 harness   Loop/Context/编排/SubAgent/Session/HITL
-L1 modules   memory│model_gateway│tools│knowledge│observability│eval│sandbox
-L0 foundation config│errors│logging│tenancy│types│factory
+```
+        React / TS UI(L5)
+              │
+       (桌面壳 Tauri/Electron,选型暂缓)
+              │
+   ── agent-events 协议 + 控制 API(稳定跨语言边界)──
+              │
+┌───────── Rust Agent Runtime(永远一份)─────────┐
+│ L4 server    控制API/事件推送(SSE)/认证/配额   │ TenantContext 唯一构造点
+│ L3 assembly  Profile/Skill/Registry             │ 声明式,无运行时逻辑
+│ L2 harness   Loop/Context/Scheduler/SubAgent/Session/HITL/Permission/EventBus
+│ L1 modules   memory│model_gateway│tools│knowledge│observability│eval│sandbox
+│ L0 foundation config│errors│logging│tenancy│types│factory
+│ Adapter      LLM(OpenAI/Anthropic/Gemini/本地,Rust HTTP);MCP 走子进程
+└──────────────────────────────────────────────────┘
+```
 
-依赖方向严格单向向下,由 import-linter 三条契约在 CI 强制
-(分层/模块独立/harness 禁触 providers)。
+- **Runtime 即服务,永远一份**:L0–L4 + Adapter 是一个长运行 Rust 进程;所有入口(CLI / Desktop / Cloud / API)都是它的 L5 客户端,经同一套稳定边界(agent-events + 控制 API)接入(ADR 0021)。
+- **语言分工**(ADR 0019):Runtime = Rust;UI/客户端 = TypeScript。跨语言边界只有 Runtime↔UI 一处,是协议/IPC 边界,非函数调用。
+- **Adapter 在 Rust,MCP 走子进程**:Runtime 自包含、无跨语言热路径;MCP 本是子进程协议,天然跨进程(ADR 0021)。
+
+依赖方向严格单向向下,由 Cargo crate 依赖边界在编译期物理强制
+(分层/模块独立/harness 禁触 providers),辅以架构测试兜底。
 
 ## 2. 各层职责与边界
 
 ### L0 foundation
-零业务语义。tenancy.TenantContext(tenant_id, user_id) 为
-frozen dataclass;errors 定义 KairosError → ProviderError 体系;
-底层异常(lancedb/openai/mcp)必须在 provider 层封装,不外泄。
+零业务语义。tenancy.TenantContext(tenant_id, user_id)为
+不可变 struct(`new()` 构造期校验);errors 定义 KairosError 统一错误枚举(含 Provider 变体);
+底层错误(lancedb/模型 SDK/mcp)必须在 provider 层封装,不外泄。
 
-### L1 modules(每模块固定骨架:contracts/ + providers/ + factory.py)
+### L1 modules(每模块固定骨架:contracts + providers + factory,各为一个 crate)
 
 | 模块 | 契约核心 | 要点 |
 |---|---|---|
@@ -79,7 +93,8 @@ cli 为参考实现,只消费 server API。行业 APP 独立仓库,
 - 隔离不变量:租户是硬边界——memory 按 `{tenant_id}__{kind}` 物理分表
   (ADR 0013)、knowledge/session/observability 按 `tenant_id` 列强制过滤;
   表内再按 `owner_id`(user)过滤。禁止跨租户召回,缺作用域 fail-closed,
-  由契约测试固化(ADR 0009)。
+  由契约测试固化(ADR 0009)。(Rust 代码标识符与物理表名/列名均为 snake_case,天然一致;
+  跨进程协议 wire 字段以 protocol 定义为准。)
 - 记账:model_gateway 按租户聚合 token/成本,server 层执行配额。
 - 合规:日志脱敏 strict 档——不落记忆/知识明文与学生 PII,
   只记元数据与 id/哈希前缀。

@@ -12,79 +12,80 @@
 
 ```
 kairos-agent-infra/
-├── pyproject.toml                 # 依赖、构建、工具配置(单一事实源)
+├── Cargo.toml                     # workspace 根:声明成员 crates + 共享依赖
+├── Cargo.lock                     # 锁定版本
+├── rustfmt.toml / clippy 配置      # 格式化 + lint
 ├── README.md
 ├── docs/                          # 设计文档(本资产)
-├── src/
-│   └── kairos/
-│       ├── foundation/            # L0 底座:横切关注点,不含业务逻辑
-│       │   ├── config.py          #    配置加载与校验(pydantic-settings)
-│       │   ├── errors.py          #    统一错误类型层级
-│       │   ├── tenancy.py         #    TenantContext(frozen dataclass,ADR 0012)
-│       │   ├── logging.py         #    结构化日志(get_logger / configure_logging)
-│       │   ├── factory.py         #    通用实现注册表(impl 名→构造器,ADR 0011)
-│       │   ├── tracing.py         #    trace 接入点(OpenTelemetry 抽象;后续任务落地)
-│       │   └── types.py           #    跨模块共享的基础类型(无业务语义;后续任务落地)
-│       │
-│       ├── modules/               # L1 infra 模块:每个自包含、互不依赖内部
-│       │   └── memory/            #    记忆模块(第一批实现)
-│       │       ├── contracts/     #      抽象接口(对外契约 + provider 契约)
-│       │       │   ├── store.py         # MemoryStore / Retriever(harness 消费)
-│       │       │   ├── vector_store.py
-│       │       │   ├── embedding.py
-│       │       │   ├── rerank.py
-│       │       │   └── tokenizer.py
-│       │       ├── store.py       #      MemoryStore/Retriever 实现(领域总入口)
-│       │       ├── models.py      #      领域模型(MemoryBase + 三类 kind)
-│       │       ├── providers/     #      provider 契约的具体实现(可插拔)
-│       │       │   ├── vector/lancedb_store.py   # 含租户物理分表路由(ADR 0013)
-│       │       │   ├── embedding/{openai_compat,sentence_transformer}.py
-│       │       │   ├── rerank/{cross_encoder,http_rerank}.py
-│       │       │   ├── tokenizer/jieba_tokenizer.py
-│       │       │   └── factory.py
-│       │       ├── kinds/         #      三类记忆各自的写入/淘汰逻辑
-│       │       │   ├── semantic.py
-│       │       │   ├── episodic.py
-│       │       │   └── procedural.py
-│       │       └── retrieval/     #      统一检索层
-│       │           ├── searcher.py
-│       │           ├── fusion.py
-│       │           └── recall.py   #      召回函数 + RecallRouter(选择性召回门控)
-│       │       #   (trace 评估/提炼是模块外的独立关注点,归 harness/distill,ADR 0008;
-│       │       #    模块对 procedural 只暴露 write_experience,不含 distiller)
-│       │
-│       ├── harness/               # L2 运行时骨架:唯一跨模块编排层
-│       │                          #    loop / context / orchestration / subagent / session / hitl / distill
-│       ├── assembly/              # L3 声明式装配:profile / skill / registry(无运行时逻辑)
-│       ├── server/                # L4 对外服务面:认证 / REST+SSE / 配额;TenantContext 唯一构造点
-│       └── cli/                   # L5 参考客户端:只消费 server API
+├── crates/
+│   ├── foundation/                # L0 底座:横切关注点,不含业务逻辑
+│   │   └── src/
+│   │       ├── config.rs          #    配置加载与校验(serde + toml)
+│   │       ├── errors.rs          #    统一错误类型层级(thiserror)
+│   │       ├── tenancy.rs         #    TenantContext(不可变 struct + 构造校验,ADR 0012)
+│   │       ├── logging.rs         #    结构化日志(tracing crate,JSON 输出)
+│   │       ├── factory.rs         #    通用实现注册表(impl 名→构造器,ADR 0011)
+│   │       ├── tracing.rs         #    trace 接入点(OpenTelemetry;后续任务落地)
+│   │       ├── types.rs           #    跨模块共享的基础类型(后续任务落地)
+│   │       └── lib.rs             #    crate 根,pub 汇出
+│   │
+│   ├── memory/                    # L1 记忆模块(第一批实现,独立 crate)
+│   │   └── src/
+│   │       ├── contracts/         #      抽象 trait(对外契约 + provider 契约)
+│   │       │   ├── store.rs             # MemoryStore / Retriever(harness 消费)
+│   │       │   ├── vector_store.rs
+│   │       │   ├── embedding.rs
+│   │       │   ├── rerank.rs
+│   │       │   └── tokenizer.rs
+│   │       ├── store.rs           #      MemoryStore/Retriever 实现(领域总入口)
+│   │       ├── models.rs          #      领域模型(MemoryBase + 三类 kind)
+│   │       ├── providers/         #      provider 契约的具体实现(可插拔,私有 mod)
+│   │       │   ├── vector/lancedb_store.rs   # 含租户物理分表路由(ADR 0013)
+│   │       │   ├── embedding/{openai_compat,sentence_transformer}.rs
+│   │       │   ├── rerank/{cross_encoder,http_rerank}.rs
+│   │       │   ├── tokenizer/jieba_tokenizer.rs
+│   │       │   └── factory.rs
+│   │       ├── kinds/             #      三类记忆各自的写入/淘汰逻辑
+│   │       │   ├── semantic.rs · episodic.rs · procedural.rs
+│   │       └── retrieval/         #      统一检索层
+│   │           ├── searcher.rs · fusion.rs
+│   │           └── recall.rs       #      召回 + RecallRouter(选择性召回门控)
+│   │       #   (trace 评估/提炼归 harness/distill,ADR 0008;模块对 procedural 只暴露 write_experience)
+│   │
+│   ├── model_gateway/ tools/ knowledge/ observability/ eval/   # 其余 L1 模块,各一 crate
+│   ├── harness/                   # L2 运行时骨架:唯一跨模块编排层
+│   │                              #    loop / context / scheduler / subagent / session / hitl / distill / permission / event-bus
+│   ├── assembly/                  # L3 声明式装配:profile / skill(无运行时逻辑)
+│   ├── server/                    # L4 对外服务面:控制 API / agent-events(SSE)/ 认证 / 配额;TenantContext 唯一构造点
+│   └── protocol/                  # agent-events + 控制 API 的 Rust 侧类型定义
 │
-└── tests/
-    ├── unit/                      # 纯逻辑单测(mock 掉 Provider/Store)
-    ├── integration/               # 真实 LanceDB + 真实/本地模型
-    ├── contracts/                 # 抽象接口的契约测试(任何实现都要过)
-    └── conftest.py
+├── apps/
+│   ├── cli/                       # L5 CLI 客户端:只消费 server API
+│   └── ui/                        # L5 React/TS UI(+ 桌面壳,壳选型暂缓)
+├── packages/
+│   └── protocol-ts/               # 协议类型 TS 侧定义(与 crates/protocol 对齐)
+└── (集成测试置于各 crate 的 tests/ 或 workspace xtask)
 ```
 
-> **关键结构决策:抽象接口 `contracts/` 在模块内,不在顶层。** 按"模块自包含"原则,记忆模块自己的抽象放在 `modules/memory/contracts/`。这样删掉记忆模块目录,底座与项目骨架仍独立成立。Phase 2 起,L2–L5 各层随对应设计落地(见 [roadmap](../project/roadmap.md));本阶段 L2+ 为 docstring-only 骨架包,使 import-linter 六层契约可从第一天激活。
+> **关键结构决策:抽象 trait `contracts` 在模块 crate 内,不在顶层。** 按"模块自包含"原则,记忆模块自己的抽象放在 `crates/memory/src/contracts/`。这样删掉记忆 crate,底座与 workspace 骨架仍独立成立。Phase 2 起,L2–L5 各层随对应设计落地(见 [roadmap](../project/roadmap.md));本阶段 L2+ 为占位 crate(空 `lib.rs`),使 Cargo crate 依赖边界从第一天即物理强制六层契约。
 
 ### 目录依赖规则(六层单向)
 
 | 目录 | 层级 | 允许依赖 | 禁止依赖 |
 |------|------|---------|---------|
-| `foundation/` | L0 | 仅标准库与基础三方库 | 任何上层 |
-| `modules/<m>/` | L1 | `foundation/` + 自己 | 其他模块的内部、任何上层 |
-| `modules/<m>/<内部>` | 模块内分层 | 模块内遵循领域→抽象→实现的倒置(领域逻辑不依赖 `providers/`) | — |
-| `harness/` | L2 | 各模块的 **contracts**(禁触 `providers`)、`foundation/` | 模块 providers 内部、上层 |
-| `assembly/` | L3 | `harness/`、`foundation/` | 运行时逻辑 |
-| `server/` | L4 | `assembly/`、`harness/`、`foundation/` | — |
-| `cli/` | L5 | 仅 server HTTP API（+ `foundation.types`) | 任何内层包 |
+| `foundation` crate | L0 | 仅标准库与基础三方 crate | 任何上层 crate |
+| `<模块>` crate | L1 | `foundation` + 自己 | 其他模块 crate、任何上层 |
+| 模块内 mod | 模块内分层 | 领域→抽象→实现的倒置(领域逻辑不依赖 `providers` mod) | — |
+| `harness` crate | L2 | 各模块的 **contracts**(禁触 `providers`)、`foundation` | 模块 providers、上层 |
+| `assembly` crate | L3 | `harness`、`foundation` | 运行时逻辑 |
+| `server` crate | L4 | `assembly`、`harness`、`foundation` | — |
+| `apps/cli`、`apps/ui` | L5 | 仅 server 的 HTTP/协议 API(+ `protocol` 类型) | 任何内层 crate |
 
-> **核心约束**:`modules/memory/` 的领域逻辑(`store`、`kinds/`、`retrieval/searcher`)**不允许 `import lancedb`,不允许 import 自己的 `providers/`**。它只依赖模块内的 `contracts/` 抽象;具体实现由组装根(server/harness 启动路径)按配置组装、注入(ADR 0011)。同理 **harness 只依赖各模块 contracts、禁止 import 任何 `providers`**。这些是"可插拔"的命门,由 import-linter 三契约在 CI 强制(ADR 0014)。
+> **核心约束**:`memory` crate 的领域逻辑(`store`、`kinds`、`retrieval::searcher`)**不允许依赖 `lancedb` crate,不允许依赖自己的 `providers` mod**。它只依赖模块内的 `contracts` trait;具体实现由组装根(server/harness 启动路径)按配置组装、注入(ADR 0011)。同理 **harness 只依赖各模块 contracts、禁止触碰任何 `providers`**。这些是"可插拔"的命门,由 Cargo crate 依赖边界在编译期强制、辅以架构测试(ADR 0014/0021)。
 
 ## 配置管理
 
-**单一配置入口,分层结构,实现选择全部走配置。** 用 `pydantic-settings`:配置即带校验的数据模型,支持多来源分层加载。
+**单一配置入口,分层结构,实现选择全部走配置。** 用 `serde` + `toml`:配置反序列化到强类型结构体(带 `#[serde(default)]` 默认值与校验),支持多来源分层合并。
 
 **加载来源与优先级(由高到低):**
 
@@ -92,123 +93,102 @@ kairos-agent-infra/
 环境变量  >  .env  >  项目 ./.kairos/config.toml  >  全局 ~/.kairos/config.toml  >  代码默认值
 ```
 
-配置文件用 **TOML**(ADR 0018):支持注释、适合手改、Python 3.13 标准库 `tomllib` 直读零依赖;各作用域共用同一 `KairosSettings` schema(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源由 `KairosSettings.settings_customise_sources` 装配。
+配置文件用 **TOML**(ADR 0018,Rust 下 TOML 为一等公民):支持注释、适合手改;`toml` crate 解析 + `serde` 反序列化到强类型结构体。各作用域共用同一 `KairosSettings` 结构(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源分层合并(可用 `figment`)后反序列化。
 
-```python
-# foundation/config.py(草案)
-from pathlib import Path
+```rust
+// foundation/src/config.rs(节选)
+use serde::{Deserialize, Serialize};
 
-from pydantic import BaseModel
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    TomlConfigSettingsSource,
-)
+// 各配置结构派生 Serialize + Deserialize(Serialize 供分层合并时把默认值序列化为合并基底),
+// 并各自 impl Default 给出字段默认值(此处从略)。#[serde(default)] 使文件只需写要覆盖的字段。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmbeddingConfig {
+    pub r#impl: String,       // openai_compat | sentence_transformer(raw 标识符,serde 序列化为 "impl")
+    pub model: String,        // 默认 "BAAI/bge-m3"
+    pub dim: u32,             // 必须与向量列维度一致,启动校验
+    pub base_url: Option<String>,   // 本地 vLLM/Ollama 也走这里
+    pub api_key_env: String,  // 只存环境变量名,不存密钥
+    pub batch_size: u32,
+    pub max_concurrent: u32,
+}
 
-PROJECT_CONFIG_FILE = Path(".kairos/config.toml")
-USER_CONFIG_FILE = Path.home() / ".kairos" / "config.toml"
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    pub dedup_threshold: f32,             // 写入去重相似度阈值(ADR 0004/0005)
+    pub episodic_salience_threshold: f32, // episodic 显著性门控(ADR 0006)
+    pub episodic_archive_after_days: u32,
+    pub procedural_effectiveness_floor: f32,
+    pub recall_router_enabled: bool,      // 选择性召回默认关(ADR 0007)
+}
 
+// 记忆相关配置(vector_store/embedding/rerank/memory)目前直接挂在顶层;
+// 未来出现第二个模块、配置确有交叉时再决定是否分组,不提前。ChatModel 配置由 model_gateway 落地。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KairosSettings {
+    pub vector_store: VectorStoreConfig,
+    pub embedding: EmbeddingConfig,
+    pub rerank: RerankConfig,
+    pub memory: MemoryConfig,
+    pub log_level: String,
+    pub trace_enabled: bool,
+}
 
-class VectorStoreConfig(BaseModel):
-    impl: str = "lancedb"
-    uri: str = "./.kairos/lancedb"
-    index_cache_size_bytes: int = 16 * 1024 * 1024   # 防 FD 泄漏,见 memory/tradeoffs
-
-
-class EmbeddingConfig(BaseModel):
-    impl: str = "openai_compat"          # openai_compat | sentence_transformer
-    model: str = "BAAI/bge-m3"
-    dim: int = 1024                      # 必须与向量列维度一致,启动校验
-    base_url: str | None = None          # 本地 vLLM/Ollama 也走这里
-    api_key_env: str = "KAIROS_EMBED_API_KEY"   # 只存环境变量名,不存密钥
-    batch_size: int = 32
-    max_concurrent: int = 8
-
-
-class RerankConfig(BaseModel):
-    enabled: bool = False
-    impl: str = "cross_encoder"          # cross_encoder | http_rerank
-    model: str = "BAAI/bge-reranker-v2-m3"
-    base_url: str | None = None
-    api_key_env: str = "KAIROS_RERANK_API_KEY"
-
-
-class MemoryConfig(BaseModel):
-    # 写入冲突去重:semantic/procedural 的 LLM 驱动 ADD/UPDATE/DELETE 前,
-    # 向量检索 top-K 候选的相似度阈值(ADR 0004/0005)
-    dedup_threshold: float = 0.92
-    # episodic 显著性门控:低于此值的内容不写入(ADR 0006)
-    episodic_salience_threshold: float = 0.5
-    # episodic 归档窗:超过此天数且久未命中的情景记忆批量归档(非硬删,ADR 0005/0006)
-    episodic_archive_after_days: int = 30
-    # procedural 低效淘汰:effectiveness 长期低于此阈值的经验标记 deprecated(ADR 0005)
-    procedural_effectiveness_floor: float = 0.2
-    # 选择性召回:是否默认启用 RecallRouter 门控(ADR 0007;默认关,由上层显式开)
-    recall_router_enabled: bool = False
-    # 注:procedural 的 trace 提炼/评估在模块外(ADR 0008),其门控参数
-    #     (如最小 trace 长度)属 harness/distill 管线,不在 MemoryConfig。
-
-
-class KairosSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="KAIROS_",
-        env_nested_delimiter="__",       # KAIROS_VECTOR_STORE__URI=...
-        env_file=".env",
-        extra="ignore",
-    )
-    # 注:记忆相关配置(vector_store/embedding/rerank/memory)目前直接挂在顶层。
-    # 未来出现第二个模块、配置确有交叉时,再决定是否按模块分组,不提前。
-    # 模型(ChatModel)配置由 model_gateway 任务落地。
-    vector_store: VectorStoreConfig = VectorStoreConfig()
-    embedding: EmbeddingConfig = EmbeddingConfig()
-    rerank: RerankConfig = RerankConfig()
-    memory: MemoryConfig = MemoryConfig()
-    log_level: str = "INFO"
-    trace_enabled: bool = False
-
-    @classmethod
-    def settings_customise_sources(cls, settings_cls, init_settings, env_settings,
-                                   dotenv_settings, file_secret_settings):
-        # 靠前者优先:环境变量 > .env > 项目 TOML > 用户 TOML > 代码默认值
-        toml = [TomlConfigSettingsSource(settings_cls, toml_file=p)
-                for p in (PROJECT_CONFIG_FILE, USER_CONFIG_FILE) if p.is_file()]
-        return (init_settings, env_settings, dotenv_settings, *toml, file_secret_settings)
+// load_settings():分层合并 全局TOML → 项目TOML → .env → 环境变量(后者覆盖前者),
+// 再反序列化 + 校验。环境变量键 KAIROS_VECTOR_STORE__URI 映射到 vector_store.uri。
 ```
 
 约定:
 
-- **实现选择是配置项**(`impl`),不是代码分支。模块的 factory 读 `impl` 决定实例化哪个类。
+- **实现选择是配置项**(`impl`),不是代码分支。模块的 factory 读 `impl` 决定实例化哪个实现。
 - **接自己的模型/端点走配置**:openai_compat 一个实现吃 OpenAI 及一切兼容端点(vLLM/Ollama/国产厂商),用户在 `.kairos/config.toml` 配 `base_url + model + api_key_env` 即可,零改码。
 - **密钥永不进配置值**,只存环境变量名(`api_key_env`),运行时按名读取。不在配置文件、不在日志出现明文。
 - **`dim` 一致性**:embedding 维度必须等于向量列维度,启动校验,不一致 fail-fast。
 
 ### 租户上下文(tenancy)
 
-`foundation/tenancy.py` 定义 `TenantContext`,是租户隔离的传递载体:
+`foundation/src/tenancy.rs` 定义 `TenantContext` 与其构造函数,是租户隔离的传递载体:
 
-```python
-# foundation/tenancy.py(草案)
-from dataclasses import dataclass
+```rust
+// foundation/src/tenancy.rs(节选)
+use crate::errors::KairosError;
 
-from kairos.foundation.errors import ValidationError
+/// 租户隔离上下文,所有涉及租户数据的接口首参统一为 &TenantContext。
+/// 字段私有 + 无 setter → 构造后不可篡改;只经 new() 构造。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TenantContext {
+    tenant_id: String, // 信任边界(API Key per tenant,ADR 0010);记忆表按此物理分表(ADR 0013)
+    user_id: String,   // 同租户内实体归属;记忆表内 owner_id 过滤
+}
 
-@dataclass(frozen=True, slots=True)
-class TenantContext:
-    tenant_id: str    # 信任边界(API Key per tenant,ADR 0010);记忆表按此物理分表(ADR 0013)
-    user_id: str      # 同租户内实体归属;记忆表内 owner_id 过滤
+impl TenantContext {
+    /// 构造期即空作用域 fail-closed(ADR 0009),不等到检索才暴露。
+    /// 校验失败返回统一错误枚举的 `KairosError::Validation` 变体(见 errors.rs)。
+    pub fn new(
+        tenant_id: impl Into<String>,
+        user_id: impl Into<String>,
+    ) -> Result<Self, KairosError> {
+        let tenant_id = tenant_id.into();
+        let user_id = user_id.into();
+        if tenant_id.is_empty() {
+            return Err(KairosError::validation("TenantContext.tenant_id 不能为空"));
+        }
+        if user_id.is_empty() {
+            return Err(KairosError::validation("TenantContext.user_id 不能为空"));
+        }
+        Ok(Self { tenant_id, user_id })
+    }
 
-    def __post_init__(self) -> None:
-        # 空作用域构造期即 fail-closed(ADR 0009),不等到检索才暴露
-        if not self.tenant_id:
-            raise ValidationError("TenantContext.tenant_id 不能为空")
-        if not self.user_id:
-            raise ValidationError("TenantContext.user_id 不能为空")
+    pub fn tenant_id(&self) -> &str { &self.tenant_id }
+    pub fn user_id(&self) -> &str { &self.user_id }
+}
 ```
 
-- **唯一构造点在 server 认证中间件**(ADR 0010),向下**显式传参**贯穿全栈,禁用 contextvar 隐式传递(ADR 0012)。
-- `frozen=True` 保证不可变,构造后不可篡改。
-- 所有涉及租户数据的接口首参 `ctx: TenantContext`;缺失/无效 → fail-closed(ADR 0009)。
+- **唯一构造点在 server 认证中间件**(ADR 0010),向下**显式传参**(`&TenantContext`)贯穿全栈,禁用 task-local/线程局部隐式传递(ADR 0012)。
+- 字段私有、无 `pub` setter,构造后不可篡改。
+- 所有涉及租户数据的接口首参 `ctx: &TenantContext`;缺失/无效 → 构造期 fail-closed(ADR 0009)。
 
 ## 统一对外接口风格
 
@@ -216,55 +196,58 @@ class TenantContext:
 
 ### 同步 vs 异步
 
-**对外 API 一律 `async`。** 理由:检索链路天然 IO 密集(embedding/向量库/rerank 调用),async 能让多路召回、批量 embedding 并发;未来服务化零摩擦。**唯一例外:CPU 密集且无 IO 的纯计算**(分词、RRF)保持同步函数,由 async 调用方直接调用(EverOS 同样取舍)。
+**对外 API 一律 `async`(tokio)。** 理由:检索链路天然 IO 密集(embedding/向量库/rerank 调用),async 能让多路召回、批量 embedding 并发;服务化零摩擦。**唯一例外:CPU 密集且无 IO 的纯计算**(分词、RRF)保持同步函数,由 async 调用方直接调用(EverOS 同样取舍)。
 
-```python
-async def recall(self, ctx: TenantContext, req: RecallRequest) -> RecallResponse: ...  # 对外:async
-def reciprocal_rank_fusion(runs: list[list[str]]) -> list[...]: ...     # 纯计算:sync
+```rust
+async fn recall(&self, ctx: &TenantContext, req: RecallRequest) -> Result<RecallResponse, KairosError>;  // 对外:async
+fn reciprocal_rank_fusion(runs: &[Vec<DocId>]) -> Vec<FusionResult>;                                     // 纯计算:sync
 ```
 
 ### 错误处理约定
 
-**统一错误层级,区分"调用方的错"与"服务端的错",fail-fast。**
+**统一错误层级,区分"调用方的错"与"服务端的错",fail-fast。** 用 `thiserror` 定义错误枚举/结构体。
 
-```python
-# foundation/errors.py(草案)
-from typing import Any
+```rust
+// foundation/src/errors.rs(节选)
+use thiserror::Error;
 
-class KairosError(Exception):
-    """所有 Kairos 错误的基类;携带 message 与可选结构化 details(仅元数据,禁明文/密钥)。"""
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.details = details or {}
+/// 所有 Kairos 错误的统一枚举;每个变体携带 message 与可选结构化 details
+/// (details 仅放元数据,禁明文/密钥)。HTTP 状态码映射由 server 层统一执行。
+#[derive(Debug, Error)]
+pub enum KairosError {
+    #[error("{0}")]
+    Config(String),        // 配置缺失/非法,启动时返回,fail-fast
 
-class ConfigError(KairosError):
-    """配置缺失/非法。启动时抛,fail-fast。"""
+    #[error("{0}")]
+    Validation(String),    // 调用方输入非法(对应未来 HTTP 422)
 
-class ValidationError(KairosError):
-    """调用方输入非法(对应未来 HTTP 422)。"""
+    // 外部 Provider(embedding/rerank/向量库/模型)调用失败(对应 5xx),统一封装底层错误,
+    // 调用方不直接看到模型 SDK / lancedb 的原始错误。provider:出错方标识;
+    // retryable:供 model_gateway 决定重试/降级(见 model_gateway §3);source:被封装的原始错误。
+    #[error("provider {provider} 调用失败: {message}")]
+    Provider {
+        provider: String,
+        message: String,
+        retryable: bool,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
 
-class ProviderError(KairosError):
-    """外部 Provider(embedding/rerank/向量库/模型)调用失败(对应 5xx)。
-    统一封装底层异常,调用方不直接看到 openai/lancedb 的原始异常。
-    provider: 出错方标识;retryable: 供 model_gateway 决定重试/降级(见 model-gateway §3);
-    cause: 被封装的原始异常(保留为 __cause__)。"""
-    def __init__(self, message, *, provider, retryable=False, cause=None, details=None): ...
-
-class NotConfiguredError(KairosError):
-    """选了需要某组件的能力,但该组件未配置;hint 给出明确配置修复指引。"""
-    def __init__(self, message, *, hint=None, details=None): ...
+    // 选了需要某组件的能力,但该组件未配置;hint 给出明确配置修复指引。
+    #[error("{message}")]
+    NotConfigured { message: String, hint: Option<String> },
+}
 ```
 
 约定:
 
-- **Provider 层错误统一封装**成 `ProviderError`,不让 `openai.APIError`、`lancedb` 异常泄漏到上层——否则换实现时上层的 except 失效,是隐性耦合。
-- **Fail-fast 组件守卫**:模块初始化时校验"所选方法所需组件是否齐备",缺了就抛 `NotConfiguredError`,不等到第一次检索才失败(借鉴 EverOS 的 `_validate_components`)。
-- **输入校验在模块边界 + DTO(Pydantic v2)** 完成,领域逻辑假设输入已合法;HTTP 状态码映射由 server 层统一执行(见 [memory/api](../modules/memory/api.md))。
+- **Provider 层错误统一封装**成 `KairosError::Provider`,不让模型 SDK / `lancedb` 的原始错误泄漏到上层——否则换实现时上层的匹配失效,是隐性耦合。
+- **Fail-fast 组件守卫**:模块初始化时校验"所选方法所需组件是否齐备",缺了就返回 `NotConfigured`,不等到第一次检索才失败(借鉴 EverOS 的组件校验)。
+- **输入校验在模块边界 + DTO(serde 结构体)** 完成,领域逻辑假设输入已合法;HTTP 状态码映射由 server 层统一执行(见 [memory/api](../modules/memory/api.md))。
 
 ### DTO 与领域模型隔离
 
-模块对外契约收发 DTO(`modules/memory/contracts/`,Pydantic v2),内部用领域模型(`modules/memory/models.py`),显式转换。领域模型重构不破坏对外契约,反之亦然。DTO 一律 Pydantic v2、禁裸 dict 跨层(ADR 0014)。详见 [memory/api](../modules/memory/api.md)。
+模块对外契约收发 DTO(`memory` crate 的 `contracts` mod,serde 结构体),内部用领域模型(`memory::models`),显式转换。领域模型重构不破坏对外契约,反之亦然。DTO 一律用 serde 结构体、禁裸 map 跨层(ADR 0014)。详见 [memory/api](../modules/memory/api.md)。
 
 ## 可观测性预留
 
@@ -272,54 +255,50 @@ class NotConfiguredError(KairosError):
 
 ### 结构化日志
 
-`foundation/logging.py` 提供统一工厂:`configure_logging(level)` 装配根 logger 输出单行 JSON(`StructuredFormatter`),`get_logger(name)` 取命名空间 logger;业务字段经 `extra` 平铺:
+`foundation/src/logging.rs` 基于 `tracing` crate:初始化时装配 JSON subscriber(输出单行 JSON 到 stderr),各模块用 `tracing` 宏记结构化字段:
 
-```python
-from kairos.foundation.logging import get_logger
+```rust
+use tracing::info;
 
-logger = get_logger("memory.recall")
-logger.info("recall", extra={
-    "kind": "semantic", "method": "hybrid", "n_candidates": 42, "latency_ms": 18.3,
-})
+// 结构化字段作为键值对;绝不记录记忆内容明文与密钥。
+info!(kind = "semantic", method = "hybrid", n_candidates = 42, latency_ms = 18.3, "recall");
 ```
 
-统一 logger 工厂与字段命名。**绝不记录记忆内容明文与密钥**,只记元数据(数量、耗时、kind);涉及内容只记 id 或哈希前缀。(trace 关联 id 由 tracing 接入点产出,不放 `TenantContext`。)
+统一 subscriber 与字段命名。**绝不记录记忆内容明文与密钥**,只记元数据(数量、耗时、kind);涉及内容只记 id 或哈希前缀。(trace 关联 id 由 tracing 接入点产出,不放 `TenantContext`。)
 
 ### Trace 接入点
 
-```python
-# foundation/tracing.py —— 对 OpenTelemetry 的薄封装,未启用时 no-op
-from contextlib import contextmanager
-
-@contextmanager
-def span(name: str, **attrs):
-    """trace_enabled=False 时零开销 no-op;启用时接 OTel。"""
-    ...
+```rust
+// foundation/src/tracing.rs —— 基于 tracing crate 的 span;trace_enabled=false 时零开销。
+// 关键路径用 #[tracing::instrument] 或显式 span 包裹:
+#[tracing::instrument(skip(self), fields(kind = %kind))]
+async fn recall(&self, ctx: &TenantContext, req: RecallRequest) -> Result<RecallResponse, KairosError> { /* ... */ }
 ```
 
-在关键路径(recall、embed、向量查询、rerank)预埋 `with span(...)`。默认关闭,no-op。
+在关键路径(recall、embed、向量查询、rerank)预埋 span。默认不导出(仅本地日志);启用时接 OpenTelemetry。
 
 > **为什么现在就埋?** 这同时是记忆模块"程序记忆"的数据来源——Agent 的 trace(Step)既用于可观测性,也是 procedural 记忆的原料(见 [memory/memory-types](../modules/memory/memory-types.md))。两者共用一套 trace 抽象,避免重复造轮子。**边界(ADR 0008)**:trace 抽象放底座(横切);Step 的持久化归 observability 模块;而"如何把 trace 评估、提炼成经验"是**记忆模块之外的策略**——六层下由 **harness/distill 管线**承担(见 [harness/distill](../harness/distill.md)),**不在记忆模块业务逻辑内**——记忆模块对 procedural 只接收"已提炼经验"。这是横切、模块机制、模块外策略三者的分界。
 
 ## 测试与工程化骨架
 
-| 类型 | 目录 | 跑什么 | 何时 |
+| 类型 | 位置 | 跑什么 | 何时 |
 |------|------|--------|------|
-| 单元 | `tests/unit/` | 纯逻辑(融合、淘汰、DTO 转换),mock Provider/Store | 每次提交 |
-| 契约 | `tests/contracts/` | 一套测试,任何 `VectorStore`/`EmbeddingProvider` 实现都必须通过 | 新增实现时 |
-| 集成 | `tests/integration/` | 真实 LanceDB(临时目录)+ 本地小模型,端到端 | CI / 本地 |
+| 单元 | 各 crate 内 `#[cfg(test)] mod tests` | 纯逻辑(融合、淘汰、DTO 转换),mock Provider/Store | 每次提交 |
+| 契约 | 被测 crate 的 `tests/` 或专用 dev crate | 一套测试,任何 `VectorStore`/`EmbeddingProvider` 实现都必须通过 | 新增实现时 |
+| 集成 | workspace `tests/` 或 `xtask` | 真实 LanceDB(临时目录)+ 本地小模型,端到端 | CI / 本地 |
 
-**契约测试是可插拔的保险**:针对抽象接口而非具体实现。新接一个向量库实现,跑过契约测试就保证能无缝替换 LanceDB。把"可替换性"从口头承诺变成可验证约束。
+**契约测试是可插拔的保险**:针对抽象 trait 而非具体实现。新接一个向量库实现,跑过契约测试就保证能无缝替换 LanceDB。把"可替换性"从口头承诺变成可验证约束。
 
 > **跨 owner 隔离断言是契约测试的必过项(ADR 0009)**:任何 `VectorStore` 实现都必须通过——注入 owner A、owner B 两份数据后,断言「A 的作用域查询永不返回 B 的记录」「缺失有效作用域(空 `owner_id`)时拒绝查询而非返回全量」。这把"跨用户不泄漏"(对应 OWASP LLM02/LLM08)从设计承诺变成 CI 可验证的硬约束,且换向量库时自动重验。
 
-工程化基线(配置在 `pyproject.toml`):
+工程化基线(配置在 workspace `Cargo.toml` / `rustfmt.toml` / clippy 配置):
 
-- 格式化/lint:`ruff`。
-- 类型检查:`mypy` 或 `pyright`,`foundation/` 与模块 `contracts/` 要求严格类型。
-- **依赖方向检查**:`import-linter`,把上面的依赖规则写成 CI 可检查的契约。
-- 测试:`pytest` + `pytest-asyncio`。
-- 依赖管理:`uv` 或 `pip-tools`,**锁定版本**(安全约定:不用开放区间)。
+- 格式化/lint:`cargo fmt` + `cargo clippy`(告警即失败),`foundation` 与模块 `contracts` 要求最严。
+- 类型检查:`cargo check`(编译期),Rust 类型系统天然强制。
+- **依赖方向检查**:Cargo crate 依赖边界——下层 crate 不声明上层,上层符号物理不可见(编译期强制),辅以架构测试兜底。
+- 测试:`cargo test`(+ `cargo llvm-cov` 覆盖率)。
+- 运行时:tokio async;Runtime 出单二进制(ADR 0019/0021)。
+- 依赖管理:Cargo,**锁定版本**(`Cargo.lock` 入库;安全约定:不用开放区间)。
 
 ---
 

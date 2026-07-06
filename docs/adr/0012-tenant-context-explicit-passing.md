@@ -35,3 +35,11 @@
 - 全部 memory 契约(`MemoryStore`/`Retriever`)、`SessionStore`、后续模块的租户相关接口,首参统一 `ctx`。
 - foundation 的 `TenantContext` 是 frozen dataclass,无 setter,构造后不可变。
 - 契约测试模板包含"缺 ctx → fail-closed"用例。
+
+## 追记(2026-07-06,ADR 0019/0021 语言迁移)
+
+**结论不变**——显式首参 `ctx: &TenantContext`、禁用隐式传递依旧是隔离不变量的落地方式。经历一版 TS 修订后随 ADR 0019 最终定为 **Rust Runtime**;以下为最终(Rust)映射:
+
+- 被禁的隐式传递范式在 Rust 里对应 **tokio task-local / 线程局部**(`tokio::task_local!`、`thread_local!`),同样禁用:理由与 contextvar 一致(安全语义藏进隐式态、跨 task/线程边界传播易漏易串味)。
+- `TenantContext` 从 frozen dataclass 改为 **不可变 struct**(无 `pub` setter,只读字段;构造走 `TenantContext::new(...)` 关联函数,在构造期做空作用域 fail-closed 校验并返回 `Result`,ADR 0009)。
+- 接口首参 `ctx: &TenantContext`;"缺 ctx → 编译期缺参错误"在 Rust 类型系统下强制成立,比运行时检查更硬。

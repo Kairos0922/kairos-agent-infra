@@ -1,0 +1,17 @@
+# harness(L2):唯一跨模块编排层。只依赖各模块 contracts 与 foundation(禁触 providers)。
+# 依赖 memory 时只用其公开的 contracts;providers 为私有 mod,不可见(六层契约三)。
+[package]
+name = "kairos_harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "harness"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+kairos_memory = { path = "../memory" }
+kairos_protocol = { path = "../protocol" }

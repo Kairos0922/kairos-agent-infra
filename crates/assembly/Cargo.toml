@@ -1,0 +1,15 @@
+# assembly(L3):声明式装配。依赖 harness、foundation(六层契约一)。
+[package]
+name = "kairos_assembly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "assembly"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+kairos_harness = { path = "../harness" }

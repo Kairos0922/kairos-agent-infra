@@ -55,7 +55,7 @@
 |------|---------------------|---------------------|----------------------|
 | **本质** | 关于用户的去情境化事实与偏好 | 发生过的对话/事件历史 | 从 Agent 执行 trace 提炼的可复用策略 |
 | **认知功能** | "什么是真的" | "发生过什么" | "怎么做" |
-| **个人助理 例** | "偏好简洁回答""在做 Python 项目" | 上次会话贴过某段报错日志、讨论过的方案 | "帮用户订票先确认日期再查价成功率高" |
+| **个人助理 例** | "偏好简洁回答""在做数据分析项目" | 上次会话贴过某段报错日志、讨论过的方案 | "帮用户订票先确认日期再查价成功率高" |
 | **教育助手 例** | "教高一数学""偏好苏格拉底式提问""所带班几何整体弱" | 上次备课讨论过的课题、生成过的教案草稿 | "给基础弱的班讲分数,先实物类比再上符号,接受度高" |
 | **生命周期** | 长期(冲突时更新/废弃,不按时间过期) | 中长期(衰减/可归档,不靠时长定生死) | 中长期(强度衰减,低效则淘汰) |
 | **写入触发** | run 后异步抽取(`run_extract`)+ 显式写入(`agent_explicit`) | run 会话摘要 + 压缩摘要段,过显著性门控(保持原始) | **仅 distill 管线**(`distill`,run 内不直接产生) |
@@ -125,55 +125,66 @@
 
 ## 共享数据模型基础
 
-所有 kind 的 LanceDB 表共享一组基础字段,用 `LanceModel`(LanceDB 原生支持 Pydantic 风格 schema【已验证:LanceDB docs】)定义基类。**表按 `{tenant_id}__{kind}` 物理拆分**(ADR 0013),租户不是表内字段:
+所有 kind 的 LanceDB 表共享一组基础字段。领域模型用 serde 结构体定义(下方 `MemoryBase`),provider 层用 `lancedb` crate(原生基于 Apache Arrow)的 Arrow schema 建表,负责领域模型 ↔ Arrow `RecordBatch` 的双向转换(向量列用 `FixedSizeList<f32, EMBED_DIM>`)。**表按 `{tenant_id}__{kind}` 物理拆分**(ADR 0013),租户不是表内字段:
 
-```python
-# modules/memory/models.py(草案)
-from lancedb.pydantic import LanceModel, Vector
-from typing import Literal
+```rust
+// crates/memory/src/models.rs(草案)
+use serde::{Deserialize, Serialize};
 
-EMBED_DIM = 1024  # 与 EmbeddingConfig.dim 一致,启动校验
+pub const EMBED_DIM: usize = 1024; // 与 EmbeddingConfig.dim 一致,启动校验
 
-class MemoryBase(LanceModel):
-    # ---- 主键与归属(租户不在表内:由表名 {tenant_id}__{kind} 承载) ----
-    id: str                       # 全局唯一:f"{owner_id}:{kind}:{ulid}"
-    kind: Literal["semantic", "episodic", "procedural"]
-    owner_id: str                 # 同租户内实体归属(user/agent),强制过滤字段
+/// 记忆类型(第二级认知功能分类);序列化为 snake_case,兼作物理表名后缀 {tenant_id}__{kind}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKind {
+    Semantic,
+    Episodic,
+    Procedural,
+}
 
-    # ---- 通用 scope 元数据(对 infra 无语义,键由 Profile 白名单声明) ----
-    metadata_kv: list[str] = []   # "key:value" 编码,如 ["subject:物理","class:高二3班"]
-                                  # 对外 DTO 呈现为 dict[str,str];编码/过滤翻译是 provider 细节
+/// 所有 kind 的 LanceDB 表共享的基础字段(表名 {tenant_id}__{kind} 承载租户,故不入表)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryBase {
+    // ---- 主键与归属(租户不在表内:由表名 {tenant_id}__{kind} 承载) ----
+    pub id: String,                  // 全局唯一:format!("{owner_id}:{kind}:{ulid}")
+    pub kind: MemoryKind,
+    pub owner_id: String,            // 同租户内实体归属(user/agent),强制过滤字段
 
-    # ---- 写入来源(幂等去重 + 按来源回滚) ----
-    source: str                   # MemorySource: run_extract | agent_explicit | distill
-    source_run_ids: list[str] = []
+    // ---- 通用 scope 元数据(对 infra 无语义,键由 Profile 白名单声明) ----
+    pub metadata_kv: Vec<String>,    // 默认空;"key:value" 编码,如 subject:物理 / class:高二3班
+                                     // 对外 DTO 呈现为 HashMap<String, String>;编码/过滤翻译是 provider 细节
 
-    # ---- 检索字段(双字段 BM25,借鉴 EverOS) ----
-    text: str                     # 原始展示文本(给人/LLM 看)
-    text_tokens: str              # 预分词、空格连接(FTS/BM25 索引建在这列)
-    vector: Vector(EMBED_DIM)     # 语义向量(cosine ANN)
+    // ---- 写入来源(幂等去重 + 按来源回滚) ----
+    pub source: String,              // MemorySource: run_extract | agent_explicit | distill
+    pub source_run_ids: Vec<String>, // 默认空
 
-    # ---- 内容指纹(增量 re-embed 优化 + 幂等去重,借鉴 EverOS) ----
-    content_sha256: str           # 仅对内容字段哈希;审计字段变更不触发 re-embed
+    // ---- 检索字段(双字段 BM25,借鉴 EverOS) ----
+    pub text: String,                // 原始展示文本(给人/LLM 看)
+    pub text_tokens: String,         // 预分词、空格连接(FTS/BM25 索引建在这列)
+    pub vector: Vec<f32>,            // 语义向量(cosine ANN);Arrow 列为 FixedSizeList<f32, EMBED_DIM>
 
-    # ---- 生命周期 ----
-    created_at: float
-    updated_at: float
-    expires_at: float | None = None   # None=不过期;episodic 归档/保留窗可用它
-    deprecated: bool = False          # 软删除/废弃标记
+    // ---- 内容指纹(增量 re-embed 优化 + 幂等去重,借鉴 EverOS) ----
+    pub content_sha256: String,      // 仅对内容字段哈希;审计字段变更不触发 re-embed
+
+    // ---- 生命周期 ----
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub expires_at: Option<f64>,     // None=不过期;episodic 归档/保留窗可用它
+    pub deprecated: bool,            // 软删除/废弃标记(默认 false)
+}
 ```
 
 **双字段 BM25 方案**(借鉴 EverOS):`text` 存原始文本供展示,`text_tokens` 存预分词结果(中文 jieba),FTS 索引建在 `text_tokens`。**为什么拆两列?** 分词策略在模块内可切换,LanceDB FTS 用 whitespace tokenizer 读已分好的 `text_tokens`——换分词器只需重算这一列,不动 schema、不依赖库内置分词器的语言支持。
 
 **`content_sha256`**(借鉴 EverOS):只对参与语义的内容字段哈希。仅审计字段(`updated_at` 等)变动时哈希不变,re-reconcile 时跳过重新 embedding,省调用成本。同时是幂等键的一部分:同 `(source, source_run_ids, content_sha256)` 重复写入不产生新条目(契约测试固化)。
 
-**`metadata_kv`**(通用 scope 元数据):对 infra 无语义的键值对(教育用 `subject/class/term`,个人助理用 `project` 等),对外 DTO 呈现为 `metadata: dict[str, str]`,检索时经 `MetadataFilter` 等值下推(见 [retrieval](./retrieval.md))。比扩 `category` 枚举更灵活,且不让 infra 认识业务概念。**【待验证】**:LanceDB 对 list 列的 `where` 过滤语法(`array_contains` 或等价 SQL),落地前需确认;若不支持,退化为常用 scope 键展开为独立标量列(provider 内部细节,不影响契约)。
+**`metadata_kv`**(通用 scope 元数据):对 infra 无语义的键值对(教育用 `subject/class/term`,个人助理用 `project` 等),对外 DTO 呈现为 `metadata: HashMap<String, String>`,检索时经 `MetadataFilter` 等值下推(见 [retrieval](./retrieval.md))。比扩 `category` 枚举更灵活,且不让 infra 认识业务概念。**【待验证】**:LanceDB 对 list 列的 `where` 过滤语法(`array_contains` 或等价 SQL),落地前需确认;若不支持,退化为常用 scope 键展开为独立标量列(provider 内部细节,不影响契约)。
 
-> **来源**:LanceModel / Vector 列 / FTS(BM25)/ cosine ANN 均为 LanceDB **已验证**能力,见 [tradeoffs](./tradeoffs.md)。双字段 BM25、content_sha256 借鉴 EverOS 源码(`tables/episode.py`),见 [everos-analysis](./everos-analysis.md)。
+> **来源**:Arrow schema 建表 / 向量列(`FixedSizeList<f32>`)/ FTS(BM25)/ cosine ANN 均为 LanceDB **已验证**能力,见 [tradeoffs](./tradeoffs.md)。双字段 BM25、content_sha256 借鉴 EverOS 源码(`tables/episode.py`),见 [everos-analysis](./everos-analysis.md)。
 
 ## 语义记忆 (semantic)
 
-> 关于用户的、去情境化的长期事实与偏好。"什么是真的"。例:"偏好简洁回答"、"在做 Python 项目"、"母语中文"。对应认知科学的 semantic memory(Tulving 1972),原 `personal`。
+> 关于用户的、去情境化的长期事实与偏好。"什么是真的"。例:"偏好简洁回答"、"在做数据分析项目"、"母语中文"。对应认知科学的 semantic memory(Tulving 1972),原 `personal`。
 
 ### 记什么(内容范畴)
 
@@ -181,7 +192,7 @@ class MemoryBase(LanceModel):
 
 | category | 含义 | 例 | 特点 |
 |----------|------|----|------|
-| `fact` | 客观属性事实 | "母语中文""在做 Python 项目" | 较稳定,变化时需更新 |
+| `fact` | 客观属性事实 | "母语中文""在做数据分析项目" | 较稳定,变化时需更新 |
 | `preference` | 偏好/习惯 | "喜欢简洁回答""不喜欢冗长铺垫" | 影响 Agent 行为;PrefEval 类基准专门测它 |
 | `profile` | 阶段性画像 | "现在的工作是后端工程师" | 最易随时间变化、被新信息推翻(对应 KU 能力) |
 
@@ -191,13 +202,19 @@ class MemoryBase(LanceModel):
 
 ### 数据模型
 
-```python
-# modules/memory/kinds/semantic.py(草案)
-class SemanticMemory(MemoryBase):
-    kind: Literal["semantic"] = "semantic"
-    category: str = "fact"        # fact | preference | profile
-    confidence: float = 1.0       # 抽取置信度(显式写入=1.0)
-    last_used_at: float | None = None  # 最近被命中时间(价值评估)
+```rust
+// crates/memory/src/kinds/semantic.rs(草案)
+use serde::{Deserialize, Serialize};
+use crate::models::MemoryBase;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticMemory {
+    #[serde(flatten)]
+    pub base: MemoryBase,             // kind 固定为 MemoryKind::Semantic
+    pub category: String,             // fact | preference | profile(默认 "fact")
+    pub confidence: f32,              // 抽取置信度(显式写入=1.0)
+    pub last_used_at: Option<f64>,    // 最近被命中时间(价值评估)
+}
 ```
 
 ### 写入触发
@@ -267,14 +284,20 @@ class SemanticMemory(MemoryBase):
 
 ### 数据模型
 
-```python
-# modules/memory/kinds/episodic.py(草案)
-class EpisodicMemory(MemoryBase):
-    kind: Literal["episodic"] = "episodic"
-    session_id: str               # 事件发生的会话边界
-    turn_index: int               # 会话内轮次序号(时序检索)
-    role: str = "user"            # user | assistant | tool
-    salience: float = 0.5         # 显著性评分(门控写入 + 检索加权)
+```rust
+// crates/memory/src/kinds/episodic.rs(草案)
+use serde::{Deserialize, Serialize};
+use crate::models::MemoryBase;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodicMemory {
+    #[serde(flatten)]
+    pub base: MemoryBase,   // kind 固定为 MemoryKind::Episodic
+    pub session_id: String, // 事件发生的会话边界
+    pub turn_index: u32,    // 会话内轮次序号(时序检索)
+    pub role: String,       // user | assistant | tool(默认 "user")
+    pub salience: f32,      // 显著性评分(门控写入 + 检索加权,默认 0.5)
+}
 ```
 
 `owner_id` 是用户(可跨会话回溯同一用户的历史);`session_id` 标记事件发生在哪次会话,供"限定本会话"或"跨会话"两种检索。
@@ -311,19 +334,25 @@ class EpisodicMemory(MemoryBase):
 
 ### 数据模型
 
-```python
-# modules/memory/kinds/procedural.py(草案)
-class ProceduralMemory(MemoryBase):
-    kind: Literal["procedural"] = "procedural"
-    task_type: str                # 任务类型标签(检索过滤)
-    situation: str                # 适用情境描述(检索主要匹配这部分)
-    action: str                   # 策略内容("采取了什么动作")
-    outcome: str                  # 结果如何
-    success: bool                 # 成败标签
-    reuse_count: int = 0          # 被复用次数
-    effectiveness: float = 0.5    # 有效性评分(0~1),随复用反馈更新
-    merge_count: int = 1          # distill 查重合并计数(合并时递增)
-    # 来源 run 集合在基类 source_run_ids(合并时取并集,兜底回溯)
+```rust
+// crates/memory/src/kinds/procedural.rs(草案)
+use serde::{Deserialize, Serialize};
+use crate::models::MemoryBase;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProceduralMemory {
+    #[serde(flatten)]
+    pub base: MemoryBase,    // kind 固定为 MemoryKind::Procedural
+    pub task_type: String,   // 任务类型标签(检索过滤)
+    pub situation: String,   // 适用情境描述(检索主要匹配这部分)
+    pub action: String,      // 策略内容("采取了什么动作")
+    pub outcome: String,     // 结果如何
+    pub success: bool,       // 成败标签
+    pub reuse_count: u32,    // 被复用次数(默认 0)
+    pub effectiveness: f32,  // 有效性评分(0~1),随复用反馈更新(默认 0.5)
+    pub merge_count: u32,    // distill 查重合并计数(合并时递增,默认 1)
+    // 来源 run 集合在基类 base.source_run_ids(合并时取并集,兜底回溯)
+}
 ```
 
 `text`/`text_tokens`/`vector` 由 `situation`(+可选 `task_type`)生成——**检索主要按"适用情境"匹配**,因为 Agent 检索经验是为回答"我现在的情况,以前怎么处理"。owner 语义:私有 `f(agent_id, user_id)` 编入 `owner_id`(本阶段仅私有,ADR 0009)。
@@ -374,7 +403,7 @@ flowchart LR
 
 ## 统一写入路径与维护
 
-三类记忆共享一条**统一写入管线**(在 `store.py` 收口):
+三类记忆共享一条**统一写入管线**(在 `store.rs` 收口):
 
 ```mermaid
 flowchart LR

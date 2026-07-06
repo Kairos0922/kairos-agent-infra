@@ -20,14 +20,14 @@ flowchart LR
 
 | 对象 | 在哪层 | 谁能看见 | 作用 |
 |------|--------|---------|------|
-| **Request/Result DTO**(`contracts/`) | 模块对外 | harness | 稳定对外契约,Pydantic v2,禁裸 dict 跨层 |
-| **领域模型**(`models.py`) | 模块内部 | 仅记忆模块 | 领域逻辑 |
+| **Request/Result DTO**(`contracts/`) | 模块对外 | harness | 稳定对外契约,serde 结构体,禁裸 map 跨层 |
+| **领域模型**(`models.rs`) | 模块内部 | 仅记忆模块 | 领域逻辑 |
 | **存储 schema**(providers 内) | provider 内部 | 仅 provider | LanceDB 表结构 |
 
 > **为什么三层对象、显式翻译?** 它把"对外契约""领域逻辑""存储
 > schema"三件事解耦:存储改字段不影响对外 API,对外 API 调整
-> 不影响表结构,每层独立演进。代价是多写转换代码,用 Pydantic
-> `model_validate` / 简单 mapper 把成本压到最低。
+> 不影响表结构,每层独立演进。代价是多写转换代码,用 serde
+> 反序列化 / 简单 mapper 把成本压到最低。
 
 ## 租户上下文:ctx 首参(ADR 0012)
 
@@ -42,97 +42,158 @@ ctx 只能来自 server 认证中间件(TenantContext 的唯一构造点,
 
 ## 对外契约与 DTO
 
-```python
-# modules/memory/contracts/(草案)
-from enum import StrEnum
-from pydantic import BaseModel
-from typing import Literal, Protocol
+```rust
+// crates/memory/src/contracts/(草案)
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
-class MemorySource(StrEnum):
-    """写入来源(写入矩阵三路径,支撑幂等去重与按来源回滚)。"""
-    RUN_EXTRACT = "run_extract"        # Context Engine run 后异步抽取
-    AGENT_EXPLICIT = "agent_explicit"  # save_memory 工具(用户显式"记住")
-    DISTILL = "distill"                # distill 管线(procedural 唯一来源)
+/// 写入来源(写入矩阵三路径,支撑幂等去重与按来源回滚)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySource {
+    RunExtract,     // Context Engine run 后异步抽取
+    AgentExplicit,  // save_memory 工具(用户显式"记住")
+    Distill,        // distill 管线(procedural 唯一来源)
+}
 
-class MemoryItem(BaseModel):
-    """对外的记忆条目表示,屏蔽内部 schema 细节。
-    id / kind / created_at 必带:Context Engine 的 id 级去重
-    与"冲突时新者优先"依赖它们(见 harness/context.md §2.1)。"""
-    id: str
-    kind: Literal["semantic", "episodic", "procedural"]
-    text: str
-    created_at: float
-    score: float | None = None       # 仅检索返回时有
-    metadata: dict[str, str] = {}    # scope(class/subject/term)等通用元数据
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKind {
+    Semantic,
+    Episodic,
+    Procedural,
+}
 
-class WriteRequest(BaseModel):
-    kind: Literal["semantic", "episodic", "procedural"]
-    text: str
-    source: MemorySource
-    source_run_ids: list[str] = []   # 来源 run(幂等去重键的一部分)
-    metadata: dict[str, str] = {}    # scope 推断结果等(context.md §5.1)
+/// 对外的记忆条目表示,屏蔽内部 schema 细节。
+/// id / kind / created_at 必带:Context Engine 的 id 级去重
+/// 与"冲突时新者优先"依赖它们(见 harness/context.md §2.1)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryItem {
+    pub id: String,
+    pub kind: MemoryKind,
+    pub text: String,
+    pub created_at: f64,
+    #[serde(default)]
+    pub score: Option<f64>,                    // 仅检索返回时有
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,     // scope(class/subject/term)等通用元数据
+}
 
-class DistilledExperience(BaseModel):
-    """一条**已提炼、已评估**的程序记忆经验。由 harness/distill
-    管线产出(ADR 0008),记忆模块只负责去重/合并写入。"""
-    task_type: str
-    situation: str                   # 适用情境描述(检索主要匹配它)
-    action: str                      # 策略内容
-    outcome: str
-    success: bool
-    effectiveness: float = 0.5
-    source_run_ids: list[str]        # 来源 run 集合(查重合并时并集)
-    metadata: dict[str, str] = {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteRequest {
+    pub kind: MemoryKind,
+    pub text: String,
+    pub source: MemorySource,
+    #[serde(default)]
+    pub source_run_ids: Vec<String>,           // 来源 run(幂等去重键的一部分)
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,     // scope 推断结果等(context.md §5.1)
+}
 
-class MetadataFilter(BaseModel):
-    """v1 只做**等值匹配**的最小过滤 DSL,如
-    {"class": "高二3班", "subject": "物理"};范围/复合查询暂缓。
-    在召回阶段下推到存储层 prefilter(见 retrieval.md)。"""
-    equals: dict[str, str] = {}
+/// 一条**已提炼、已评估**的程序记忆经验。由 harness/distill
+/// 管线产出(ADR 0008),记忆模块只负责去重/合并写入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistilledExperience {
+    pub task_type: String,
+    pub situation: String,                     // 适用情境描述(检索主要匹配它)
+    pub action: String,                        // 策略内容
+    pub outcome: String,
+    pub success: bool,
+    #[serde(default = "default_effectiveness")]
+    pub effectiveness: f64,
+    pub source_run_ids: Vec<String>,           // 来源 run 集合(查重合并时并集)
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
 
-class RecallRequest(BaseModel):
-    query: str
-    kinds: list[Literal["semantic", "episodic", "procedural"]] = ["semantic"]
-    method: Literal["vector", "keyword", "hybrid"] = "hybrid"
-    top_k: int = 10
-    use_rerank: bool = False
-    filter: MetadataFilter | None = None
+fn default_effectiveness() -> f64 {
+    0.5
+}
 
-class RecallResponse(BaseModel):
-    items: list[MemoryItem]          # 平铺列表,每条带 kind(分组是渲染职责)
-    method: str                      # 实际使用方法(便于调试)
-    latency_ms: float
+/// v1 只做**等值匹配**的最小过滤 DSL,如
+/// {"class": "高二3班", "subject": "物理"};范围/复合查询暂缓。
+/// 在召回阶段下推到存储层 prefilter(见 retrieval.md)。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MetadataFilter {
+    #[serde(default)]
+    pub equals: HashMap<String, String>,
+}
+
+/// 检索方法。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecallMethod {
+    Vector,
+    Keyword,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallRequest {
+    pub query: String,
+    #[serde(default = "default_kinds")]
+    pub kinds: Vec<MemoryKind>,
+    #[serde(default = "default_method")]
+    pub method: RecallMethod,
+    #[serde(default = "default_top_k")]
+    pub top_k: u32,
+    #[serde(default)]
+    pub use_rerank: bool,
+    #[serde(default)]
+    pub filter: Option<MetadataFilter>,
+}
+
+fn default_kinds() -> Vec<MemoryKind> {
+    vec![MemoryKind::Semantic]
+}
+fn default_method() -> RecallMethod {
+    RecallMethod::Hybrid
+}
+fn default_top_k() -> u32 {
+    10
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallResponse {
+    pub items: Vec<MemoryItem>,  // 平铺列表,每条带 kind(分组是渲染职责)
+    pub method: String,          // 实际使用方法(便于调试)
+    pub latency_ms: f64,
+}
 ```
 
-```python
-# modules/memory/contracts/(接口草案)
-class MemoryStore(Protocol):
-    async def remember(self, ctx: TenantContext, req: WriteRequest) -> MemoryItem:
-        """统一写入。ctx 只能来自 server 认证中间件,模块内不构造。
-        幂等:同 (source, source_run_ids, 内容哈希) 重复写入不产生新条目。"""
+```rust
+// crates/memory/src/contracts/(接口草案)
+use async_trait::async_trait;
 
-    async def write_experience(self, ctx: TenantContext,
-                               exp: DistilledExperience) -> MemoryItem:
-        """写入已提炼经验(procedural 唯一入口,仅 distill 调用)。
-        查重合并:situation 相似的既有经验合并计数递增、
-        source_run_ids 取并集,不新增条目。"""
+#[async_trait]
+pub trait MemoryStore: Send + Sync {
+    /// 统一写入。ctx 只能来自 server 认证中间件,模块内不构造。
+    /// 幂等:同 (source, source_run_ids, 内容哈希) 重复写入不产生新条目。
+    async fn remember(&self, ctx: &TenantContext, req: WriteRequest) -> Result<MemoryItem, KairosError>;
 
-    async def reinforce(self, ctx: TenantContext, experience_id: str,
-                        *, success: bool) -> None:
-        """程序记忆复用反馈记账,更新 effectiveness/reuse_count(机制);
-        何时调用由 harness 决定(策略)。"""
+    /// 写入已提炼经验(procedural 唯一入口,仅 distill 调用)。
+    /// 查重合并:situation 相似的既有经验合并计数递增、
+    /// source_run_ids 取并集,不新增条目。
+    async fn write_experience(&self, ctx: &TenantContext, exp: DistilledExperience) -> Result<MemoryItem, KairosError>;
 
-    async def forget_session(self, ctx: TenantContext, session_id: str) -> None:
-        """遗忘某会话的 episodic 记忆(用户遗忘请求)。"""
+    /// 程序记忆复用反馈记账,更新 effectiveness/reuse_count(机制);
+    /// 何时调用由 harness 决定(策略)。
+    async fn reinforce(&self, ctx: &TenantContext, experience_id: &str, success: bool) -> Result<(), KairosError>;
 
-    async def maintain(self, ctx: TenantContext) -> None:
-        """周期维护:optimize + episodic 归档/衰减 + procedural 衰减。
-        按 namespace(租户表)独立执行,不跨租户竞争。"""
+    /// 遗忘某会话的 episodic 记忆(用户遗忘请求)。
+    async fn forget_session(&self, ctx: &TenantContext, session_id: &str) -> Result<(), KairosError>;
 
-class Retriever(Protocol):
-    async def recall(self, ctx: TenantContext, req: RecallRequest) -> RecallResponse:
-        """统一检索。作用域从 ctx 派生并强制注入(fail-closed),
-        绝不接受请求体里的租户标识。"""
+    /// 周期维护:optimize + episodic 归档/衰减 + procedural 衰减。
+    /// 按 namespace(租户表)独立执行,不跨租户竞争。
+    async fn maintain(&self, ctx: &TenantContext) -> Result<(), KairosError>;
+}
+
+#[async_trait]
+pub trait Retriever: Send + Sync {
+    /// 统一检索。作用域从 ctx 派生并强制注入(fail-closed),
+    /// 绝不接受请求体里的租户标识。
+    async fn recall(&self, ctx: &TenantContext, req: RecallRequest) -> Result<RecallResponse, KairosError>;
+}
 ```
 
 ### 双召回路径:消费方说明(接口不分叉)
@@ -182,19 +243,25 @@ server 层统一执行,模块只抛类型化错误。
 
 ## 端到端使用示例(harness 视角)
 
-```python
-# harness/context 内(示意):P5 主动召回
-resp = await retriever.recall(ctx, RecallRequest(
-    query=user_message, kinds=["semantic", "episodic"],
-    filter=MetadataFilter(equals=session_scope) if session_scope else None,
-))
+```rust
+// harness/context 内(示意):P5 主动召回
+let resp = retriever.recall(ctx, RecallRequest {
+    query: user_message,
+    kinds: vec![MemoryKind::Semantic, MemoryKind::Episodic],
+    method: RecallMethod::Hybrid,
+    top_k: 10,
+    use_rerank: false,
+    filter: session_scope.map(|equals| MetadataFilter { equals }),
+}).await?;
 
-# run 结束后写回(context.md §5):
-await store.remember(ctx, WriteRequest(
-    kind="semantic", text="所带班级力学基础薄弱",
-    source=MemorySource.RUN_EXTRACT, source_run_ids=[run_id],
-    metadata={"subject": "物理"},   # scope 推断,宁缺不误标(§5.1)
-))
+// run 结束后写回(context.md §5):
+store.remember(ctx, WriteRequest {
+    kind: MemoryKind::Semantic,
+    text: "所带班级力学基础薄弱".to_string(),
+    source: MemorySource::RunExtract,
+    source_run_ids: vec![run_id],
+    metadata: HashMap::from([("subject".to_string(), "物理".to_string())]),   // scope 推断,宁缺不误标(§5.1)
+}).await?;
 ```
 
 harness 代码里**没有任何** `lancedb`、embedding 维度、RRF、

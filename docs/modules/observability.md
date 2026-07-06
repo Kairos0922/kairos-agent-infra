@@ -13,18 +13,20 @@ Step 的持久化与查询是本模块唯一职责。三个消费方:
 
 ## 1. 契约(contracts/)
 
-```python
-class StepSink(Protocol):
-    async def append(self, ctx: TenantContext, step: Step) -> None
-    # loop 的 checkpoint 依赖:append 成功才进下一轮(S4 已定)
-    # 幂等:同 (run_id, agent_path, turn) 重复写入覆盖而非报错
-    #  (恢复场景会重放最后一轮)
+```rust
+pub trait StepSink {
+    async fn append(&self, ctx: &TenantContext, step: Step) -> Result<(), KairosError>;
+    // loop 的 checkpoint 依赖:append 成功才进下一轮(S4 已定)
+    // 幂等:同 (run_id, agent_path, turn) 重复写入覆盖而非报错
+    //  (恢复场景会重放最后一轮)
+}
 
-class TraceQuery(Protocol):
-    async def get_run(self, ctx, run_id) -> RunRecord        # run 级汇总
-    async def list_runs(self, ctx, filter, page) -> Page[RunRecord]
-    # filter: user/profile/status/时间窗(distill 与控制台的消费面)
-    async def get_steps(self, ctx, run_id) -> list[Step]     # 回放/eval
+pub trait TraceQuery {
+    async fn get_run(&self, ctx: &TenantContext, run_id: String) -> Result<RunRecord, KairosError>;        // run 级汇总
+    async fn list_runs(&self, ctx: &TenantContext, filter: RunFilter, page: PageRequest) -> Result<Page<RunRecord>, KairosError>;
+    // filter: user/profile/status/时间窗(distill 与控制台的消费面)
+    async fn get_steps(&self, ctx: &TenantContext, run_id: String) -> Result<Vec<Step>, KairosError>;      // 回放/eval
+}
 ```
 
 ## 2. 存储布局

@@ -12,29 +12,33 @@
 
 ## 1. 契约(contracts/)
 
-```python
-class ToolSpec(BaseModel, frozen=True):
-    name: str                  # 全局唯一,见 §4 命名规则
-    description: str
-    params_schema: JsonSchema  # 入参 JSON Schema,执行前强校验
-    source: ToolSource         # builtin | mcp | skill_script
-    danger_level: DangerLevel  # safe | write | external_effect
-    # danger_level 是工具的固有属性;是否需审批由 Profile 的
-    # 权限映射决定(见 §5),两者分开:属性归模块,策略归装配。
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSpec {
+    pub name: String,               // 全局唯一,见 §4 命名规则
+    pub description: String,
+    pub params_schema: JsonSchema,  // 入参 JSON Schema,执行前强校验
+    pub source: ToolSource,         // Builtin | Mcp | SkillScript(enum)
+    pub danger_level: DangerLevel,  // Safe | Write | ExternalEffect(enum)
+    // danger_level 是工具的固有属性;是否需审批由 Profile 的
+    // 权限映射决定(见 §5),两者分开:属性归模块,策略归装配。
+}
 
-class ToolRegistry(Protocol):
-    async def resolve(self, allowlist: list[str]) -> list[ToolSpec]
-    # run 启动时按 Profile 白名单解析,run 内工具集冻结(S5 已定)
+pub trait ToolRegistry {
+    async fn resolve(&self, allowlist: Vec<String>) -> Result<Vec<ToolSpec>, KairosError>;
+    // run 启动时按 Profile 白名单解析,run 内工具集冻结(S5 已定)
+}
 
-class ToolExecutor(Protocol):
-    async def execute(self, ctx: TenantContext, call: ToolCall,
-                      cancel: CancelToken) -> ToolResult
-    # ToolResult: status(ok|error|timeout|cancelled) / content
-    #             / elapsed;异常一律封装,不外泄(既定铁律)
+pub trait ToolExecutor {
+    async fn execute(&self, ctx: &TenantContext, call: ToolCall,
+                     cancel: CancelToken) -> Result<ToolResult, KairosError>;
+    // ToolResult: status(Ok|Error|Timeout|Cancelled) / content
+    //             / elapsed;错误一律封装,不外泄(既定铁律)
+}
 ```
 
-- 入参校验失败 = status=error 的正常结果(回给模型自纠),
-  不是异常。
+- 入参校验失败 = status=Error 的正常结果(回给模型自纠),
+  不是错误。
 - 超时:每工具默认 60s,ToolSpec 可覆写;超时即取消并返回
   timeout 结果。
 - CancelToken:run 取消时向下传播(S4 已定);builtin 工具

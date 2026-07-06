@@ -1,0 +1,15 @@
+# cli(L5):参考客户端,亦本地单二进制入口。只消费 server 的协议 API(+ protocol 类型),
+# 不依赖任何内层 crate 的实现(六层:L5 只碰协议边界)。
+[package]
+name = "kairos_cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kairos"
+path = "src/main.rs"
+
+[dependencies]
+kairos_protocol = { path = "../../crates/protocol" }

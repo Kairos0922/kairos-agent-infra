@@ -1,0 +1,17 @@
+# xtask:项目开发任务运行器(matklad xtask 模式)。
+# 不属于 Runtime 六层,是纯开发工具;通过 `cargo xtask <task>` 调用(见 .cargo/config.toml 别名)。
+# 首个任务:check-docs —— 校验全仓 Markdown 的内部链接与标题锚点(替代原 Python 脚本)。
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+# 零三方依赖:仅用标准库,保持工具轻量、构建快。
+[dependencies]

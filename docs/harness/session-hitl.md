@@ -21,25 +21,29 @@
 
 ## 3. SessionStore 契约(harness 层内契约)
 
-```python
-class SessionMeta(BaseModel):
-    session_id: str
-    user_id: str
-    created_at: datetime
-    topic_summary: str | None
-    scope: dict[str, str] | None = None
-    # scope 为 S16 演练增补:本会话的默认场景
-    # (如 {subject: 物理, class: 高二3班}),供记忆检索/写回的
-    # scope 推断兜底(见 context.md §2.1/§5.1);由内置工具
-    # set_session_scope 写入(见 modules/tools.md §2)。
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMeta {
+    pub session_id: String,
+    pub user_id: String,
+    pub created_at: DateTime<Utc>,        // 时间类型用 chrono::DateTime<Utc>
+    pub topic_summary: Option<String>,
+    pub scope: Option<HashMap<String, String>>,
+    // scope 为 S16 演练增补:本会话的默认场景
+    // (如 {subject: 物理, class: 高二3班}),供记忆检索/写回的
+    // scope 推断兜底(见 context.md §2.1/§5.1);由内置工具
+    // set_session_scope 写入(见 modules/tools.md §2)。
+}
 
-class SessionStore(Protocol):
-    async def create(self, ctx: TenantContext, meta: SessionMeta) -> Session
-    async def get(self, ctx: TenantContext, session_id: str) -> Session
-    async def append_history(self, ctx, session_id, entries) -> None
-    async def replace_span(self, ctx, session_id, span, summary) -> None  # 压缩用
-    async def list(self, ctx, filter) -> Page[SessionMeta]
-    async def archive(self, ctx, session_id) -> None
+#[async_trait]
+pub trait SessionStore {
+    async fn create(&self, ctx: &TenantContext, meta: SessionMeta) -> Result<Session, KairosError>;
+    async fn get(&self, ctx: &TenantContext, session_id: &str) -> Result<Session, KairosError>;
+    async fn append_history(&self, ctx: &TenantContext, session_id: &str, entries: Vec<HistoryEntry>) -> Result<(), KairosError>;
+    async fn replace_span(&self, ctx: &TenantContext, session_id: &str, span: HistorySpan, summary: String) -> Result<(), KairosError>;  // 压缩用
+    async fn list(&self, ctx: &TenantContext, filter: SessionFilter) -> Result<Page<SessionMeta>, KairosError>;
+    async fn archive(&self, ctx: &TenantContext, session_id: &str) -> Result<(), KairosError>;
+}
 ```
 
 实现:SqliteSessionStore(dev)/PostgresSessionStore(生产),
@@ -48,8 +52,8 @@ class SessionStore(Protocol):
 
 ## 4. HITL:审批流
 
-1. orchestration 判定工具命中 require_approval →
-   创建 Approval(id/工具/参数摘要/expires_at),run 转 SUSPENDED,
+1. orchestration 判定工具命中 requireApproval →
+   创建 Approval(id/工具/参数摘要/expiresAt),run 转 SUSPENDED,
    状态持久化,进程资源释放。
 2. 事件 approval_required 外发;客户端(CLI 弹确认/APP 推送)
    POST /v1/approvals/{id} {decision}。

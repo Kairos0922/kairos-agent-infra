@@ -18,7 +18,7 @@ docs/
 ├── modules/        # L1 infra 模块(自包含,互不感知)
 │   ├── memory/          # 记忆(第一批实现,含检索层/模型抽象/API/取舍)
 │   ├── benchmark/       # 记忆专项评测(协议 + 中文数据集规范)
-│   ├── model-gateway.md # 模型网关(tier 路由/降级/记账)
+│   ├── model_gateway.md # 模型网关(tier 路由/降级/记账)
 │   ├── tools.md         # 工具(内置/MCP/Skill 脚本三源)
 │   ├── knowledge.md     # 资料型知识(与记忆的"经验"分立)
 │   ├── observability.md # Step 即 trace 即 checkpoint
@@ -77,7 +77,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [model-gateway](./modules/model-gateway.md) | ChatModel/ModelRouter 契约、tier 路由(strong/fast/cheap)、降级链、按租户记账 |
+| [model_gateway](./modules/model_gateway.md) | ChatModel/ModelRouter 契约、tier 路由(strong/fast/cheap)、降级链、按租户记账 |
 | [tools](./modules/tools.md) | ToolSpec/Registry/Executor、内置工具、MCP 集成、权限模型、Skill 脚本 |
 | [knowledge](./modules/knowledge.md) | KnowledgePack/KnowledgeRetriever,资料型知识(与记忆的"经验"分立) |
 | [observability](./modules/observability.md) | StepSink/TraceQuery,Step 即 trace 即 checkpoint |
@@ -103,7 +103,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [ADR 索引](./adr/README.md) | 0001–0018 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与 import-linter、向量存储上提、sub-agent 为工具、scope 推断、配置文件用 TOML。 |
+| [ADR 索引](./adr/README.md) | 0001–0021 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与依赖契约、向量存储上提、sub-agent 为工具、scope 推断、配置文件用 TOML、语言与运行时选型(Rust + TypeScript)、CPU 下沉策略、Rust Runtime 架构与仓库结构。 |
 
 ## 阅读顺序建议
 
@@ -129,7 +129,7 @@ docs/
 | **底座 (Foundation)** | L0,所有上层共享的横切关注点(配置/错误/租户/日志/trace),不含业务逻辑。 |
 | **Harness** | L2 运行时骨架;**唯一允许编排多个 L1 模块的层**,只 import 各模块 contracts、禁触 providers。 |
 | **Assembly / Profile / Skill** | L3 声明式装配。Profile = 助手的声明式描述;Skill = 指令+资源+脚本的目录,渐进式披露。 |
-| **TenantContext** | `(tenant_id, user_id)` frozen dataclass,租户隔离的传递载体;server 唯一构造、显式向下传参。见 ADR 0010/0012。 |
+| **TenantContext** | `(tenant_id, user_id)` 不可变 struct(`TenantContext::new` 构造期校验 fail-closed),租户隔离的传递载体;server 唯一构造、显式向下传参(`&TenantContext`)。见 ADR 0010/0012。 |
 | **Run / Session / Step** | Run = 一次状态机生命周期;Session = 与一位 user 的对话容器(1 session : N run);Step = 一轮的不可变记录(trace/checkpoint/事件重建三位一体)。 |
 | **记忆 kind** | `semantic`(语义:关于用户的事实/偏好)、`episodic`(情景:发生过的对话/事件)、`procedural`(程序:从执行学到的策略)。工作记忆归 harness 层。见 ADR 0006。 |
 | **工作记忆 / 上下文内记忆 (in-context)** | context 窗口里的临时内容,归 **harness 层 Context Engine**(非 memory 模块)。Kairos 的记忆模块整体属于 external memory,in-context 归 harness。 |

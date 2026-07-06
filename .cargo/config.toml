@@ -1,0 +1,3 @@
+# Cargo 别名:`cargo xtask <task>` 运行开发任务(matklad xtask 模式)。
+[alias]
+xtask = "run --package xtask --quiet --"

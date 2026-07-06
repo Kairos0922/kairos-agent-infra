@@ -43,9 +43,10 @@ cases:
 
 ## 3. Check 类型
 
-```python
-class Check(Protocol):
-    async def evaluate(self, run: RunRecord, steps: list[Step]) -> CheckResult
+```rust
+pub trait Check {
+    async fn evaluate(&self, run: &RunRecord, steps: &[Step]) -> Result<CheckResult, KairosError>;
+}
 ```
 
 | type | 说明 |

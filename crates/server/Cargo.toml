@@ -1,0 +1,17 @@
+# server(L4):对外服务面 + TenantContext 唯一构造点。依赖 assembly、harness、foundation、protocol。
+[package]
+name = "kairos_server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+kairos_harness = { path = "../harness" }
+kairos_assembly = { path = "../assembly" }
+kairos_protocol = { path = "../protocol" }

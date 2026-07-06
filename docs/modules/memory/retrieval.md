@@ -10,8 +10,8 @@
 
 ```mermaid
 flowchart TB
-    Q["检索请求<br/>(query, kinds, method, filters, top_k)"]
-    R["方法路由 (resolve_pipeline)"]
+    Q["检索请求<br/>(query, kinds, method, filters, topK)"]
+    R["方法路由 (resolvePipeline)"]
     subgraph Recall["召回层"]
         VR["向量召回<br/>(cosine ANN)"]
         BR["BM25 召回<br/>(FTS over text_tokens)"]
@@ -54,20 +54,41 @@ flowchart TB
 
 本阶段融合策略选 **RRF(Reciprocal Rank Fusion,倒数排名融合)**。
 
-```python
-# modules/memory/retrieval/fusion.py(草案,纯计算,同步)
-def reciprocal_rank_fusion(
-    runs: list[list[str]],        # 多路召回,每路是按相关度排序的 id 列表
-    k: int = 60,                  # RRF 常数,缓和高排名统治力
-    weights: list[float] | None = None,
-) -> list[tuple[str, float]]:
-    """对每个 id 累加 w/(k + rank),跨路求和后降序。"""
-    weights = weights or [1.0] * len(runs)
-    scores: dict[str, float] = {}
-    for run, w in zip(runs, weights):
-        for rank, doc_id in enumerate(run):
-            scores[doc_id] = scores.get(doc_id, 0.0) + w / (k + rank)
-    return sorted(scores.items(), key=lambda x: -x[1])
+```rust
+// crates/memory/src/retrieval/fusion.rs(草案,纯计算,同步)
+use std::collections::HashMap;
+
+/// 融合结果:(doc_id, 累加得分),按得分降序。
+#[derive(Debug, Clone)]
+pub struct FusionResult {
+    pub doc_id: String,
+    pub score: f64,
+}
+
+/// 对每个 id 累加 w/(k + rank),跨路求和后降序。
+/// - runs:多路召回,每路是按相关度排序的 id 列表
+/// - k:RRF 常数(默认 60),缓和高排名统治力
+/// - weights:各路权重,None 时全部为 1.0
+pub fn reciprocal_rank_fusion(
+    runs: &[Vec<String>],
+    k: f64,
+    weights: Option<&[f64]>,
+) -> Vec<FusionResult> {
+    let default_weights = vec![1.0; runs.len()];
+    let weights = weights.unwrap_or(&default_weights);
+    let mut scores: HashMap<String, f64> = HashMap::new();
+    for (run, &w) in runs.iter().zip(weights.iter()) {
+        for (rank, doc_id) in run.iter().enumerate() {
+            *scores.entry(doc_id.clone()).or_insert(0.0) += w / (k + rank as f64);
+        }
+    }
+    let mut out: Vec<FusionResult> = scores
+        .into_iter()
+        .map(|(doc_id, score)| FusionResult { doc_id, score })
+        .collect();
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
+    out
+}
 ```
 
 **为什么选 RRF 而非加权分数融合?**
@@ -92,26 +113,30 @@ RRF 不需把量纲不同的 cosine 和 BM25 强行归一化,只看排名,简单
 
 **Rerank 契约:只排序,不过滤**(借鉴 EverOS):
 
-```python
-# modules/memory/contracts/rerank.py(草案)
-from typing import Protocol, Sequence, runtime_checkable
-from dataclasses import dataclass
+```rust
+// crates/memory/src/contracts/rerank.rs(草案)
+use async_trait::async_trait;
+use foundation::errors::KairosError;
 
-@dataclass
-class RerankResult:
-    index: int     # 在输入 documents 列表中的原始下标
-    score: float   # provider 定义,越高越相关
+#[derive(Debug, Clone)]
+pub struct RerankResult {
+    pub index: usize, // 在输入 documents 列表中的原始下标
+    pub score: f32,   // provider 定义,越高越相关
+}
 
-@runtime_checkable
-class RerankProvider(Protocol):
-    async def rerank(
-        self, query: str, documents: Sequence[str], *,
-        instruction: str | None = None,   # 支持 instruction-tuned reranker
-    ) -> list[RerankResult]:
-        """返回每个输入文档一条,按 score 降序。
-        约定:provider 不做过滤/截断 —— top_k 截断由调用方负责。
-        保证跨 provider 契约稳定,调用方逻辑不随 provider 变。"""
-        ...
+#[async_trait]
+pub trait RerankProvider: Send + Sync {
+    /// 返回每个输入文档一条,按 score 降序。
+    /// 约定:provider 不做过滤/截断 —— top_k 截断由调用方负责。
+    /// 保证跨 provider 契约稳定,调用方逻辑不随 provider 变。
+    /// - instruction:支持 instruction-tuned reranker(None 时不传)
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+        instruction: Option<&str>,
+    ) -> Result<Vec<RerankResult>, KairosError>;
+}
 ```
 
 > **为什么"只排序不过滤"?** 若让 provider 自己决定返回几条,换 provider 就可能改变结果数量,调用方分页/截断逻辑全乱。约定返回全量 `(index, score)`、过滤交调用方,保证跨 provider 行为一致——EverOS 的干净约定,直接采纳。
@@ -138,19 +163,21 @@ class RerankProvider(Protocol):
 
 ### EmbeddingProvider
 
-```python
-# modules/memory/contracts/embedding.py(草案)
-from typing import Protocol, Sequence, runtime_checkable
+```rust
+// crates/memory/src/contracts/embedding.rs(草案)
+use async_trait::async_trait;
+use foundation::errors::KairosError;
 
-@runtime_checkable
-class EmbeddingProvider(Protocol):
-    dim: int   # 向量维度,必须与 LanceDB 向量列一致
+#[async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    /// 向量维度,必须与 LanceDB 向量列一致。
+    fn dim(&self) -> usize;
 
-    async def embed(self, text: str) -> list[float]: ...
+    async fn embed(&self, text: &str) -> Result<Vec<f32>, KairosError>;
 
-    async def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
-        """批量,内部分块 + 并发限流(Semaphore)。写入大批记忆走这条。"""
-        ...
+    /// 批量,内部分块 + 并发限流(Semaphore)。写入大批记忆走这条。
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, KairosError>;
+}
 ```
 
 本阶段两个实现(`providers/embedding/`):
@@ -164,14 +191,12 @@ class EmbeddingProvider(Protocol):
 
 ### Tokenizer
 
-```python
-# modules/memory/contracts/tokenizer.py(草案,注意同步)
-from typing import Protocol, Sequence, runtime_checkable
-
-@runtime_checkable
-class Tokenizer(Protocol):
-    def tokenize(self, text: str) -> list[str]: ...
-    def tokenize_batch(self, texts: Sequence[str]) -> list[list[str]]: ...
+```rust
+// crates/memory/src/contracts/tokenizer.rs(草案,注意同步)
+pub trait Tokenizer: Send + Sync {
+    fn tokenize(&self, text: &str) -> Vec<String>;
+    fn tokenize_batch(&self, texts: &[String]) -> Vec<Vec<String>>;
+}
 ```
 
 - **同步**:纯 CPU 计算,无 IO,不需 async(与 EverOS 一致)。
@@ -180,62 +205,132 @@ class Tokenizer(Protocol):
 
 ### VectorStore
 
-```python
-# modules/memory/contracts/vector_store.py(草案,节选)
-from typing import Protocol, Sequence, Any, runtime_checkable
+```rust
+// crates/memory/src/contracts/vector_store.rs(草案,节选)
+use std::collections::HashMap;
+use async_trait::async_trait;
+use foundation::errors::KairosError;
 
-@runtime_checkable
-class VectorStore(Protocol):
-    async def upsert(self, table: str, rows: Sequence[dict[str, Any]]) -> int: ...
-    async def vector_search(self, table: str, query_vector: list[float], *,
-                            where: str | None = None, limit: int = 20) -> list[dict[str, Any]]: ...
-    async def fts_search(self, table: str, query_tokens: list[str], *,
-                         where: str | None = None, limit: int = 20) -> list[dict[str, Any]]: ...
-    async def delete(self, table: str, where: str) -> int: ...
-    async def optimize(self, table: str) -> None: ...   # 索引维护(见 memory-types)
+/// 一行记录:列名 → 值。provider 内部与 Arrow RecordBatch 互转。
+pub type StoreRow = HashMap<String, serde_json::Value>;
+
+/// 检索可选参数(where 前置过滤 + limit);Rust 无默认参数,用结构体 + Default 承载。
+#[derive(Debug, Clone, Default)]
+pub struct SearchParams<'a> {
+    pub where_clause: Option<&'a str>, // SQL 风格 prefilter(如 owner_id 等值下推);None 不过滤
+    pub limit: usize,
+}
+
+#[async_trait]
+pub trait VectorStore: Send + Sync {
+    async fn upsert(&self, table: &str, rows: &[StoreRow]) -> Result<usize, KairosError>;
+
+    async fn vector_search(
+        &self,
+        table: &str,
+        query_vector: &[f32],
+        params: &SearchParams<'_>,
+    ) -> Result<Vec<StoreRow>, KairosError>;
+
+    async fn fts_search(
+        &self,
+        table: &str,
+        query_tokens: &[String],
+        params: &SearchParams<'_>,
+    ) -> Result<Vec<StoreRow>, KairosError>;
+
+    async fn delete(&self, table: &str, where_clause: &str) -> Result<usize, KairosError>;
+
+    async fn optimize(&self, table: &str) -> Result<(), KairosError>; // 索引维护(见 memory-types)
+}
 ```
 
-唯一实现:`providers/vector/lancedb_store.py`。**记忆领域逻辑只见这个抽象,见不到 `lancedb`。** 换向量库 = 写新实现 + 跑过契约测试(见 [foundation](../../foundation/foundation.md))。
+唯一实现:`providers/vector/lancedb_store.rs`。**记忆领域逻辑只见这个抽象,见不到 `lancedb`。** 换向量库 = 写新实现 + 跑过契约测试(见 [foundation](../../foundation/foundation.md))。
 
 ### Factory:配置驱动组装
 
-```python
-# modules/memory/providers/factory.py(草案)
-def build_embedding_provider(cfg: EmbeddingConfig) -> EmbeddingProvider:
-    match cfg.impl:
-        case "openai_compat":        return OpenAICompatEmbedding(cfg)
-        case "sentence_transformer": return SentenceTransformerEmbedding(cfg)
-        case _: raise ConfigError(f"unknown embedding impl: {cfg.impl}")
+```rust
+// crates/memory/src/providers/factory.rs(草案)
+use std::sync::Arc;
+use foundation::{config::{EmbeddingConfig, RerankConfig}, errors::KairosError};
+use crate::contracts::{embedding::EmbeddingProvider, rerank::RerankProvider};
+use super::embedding::{OpenAiCompatEmbedding, SentenceTransformerEmbedding};
 
-def build_rerank_provider(cfg: RerankConfig) -> RerankProvider:
-    # 可由 base_url host 自动推断 provider(借鉴 EverOS),此处简化为显式 impl
-    ...
+pub fn build_embedding_provider(
+    cfg: &EmbeddingConfig,
+) -> Result<Arc<dyn EmbeddingProvider>, KairosError> {
+    match cfg.impl_.as_str() {
+        "openai_compat" => Ok(Arc::new(OpenAiCompatEmbedding::new(cfg)?)),
+        "sentence_transformer" => Ok(Arc::new(SentenceTransformerEmbedding::new(cfg)?)),
+        other => Err(KairosError::Config(format!("unknown embedding impl: {other}"))),
+    }
+}
+
+pub fn build_rerank_provider(
+    cfg: &RerankConfig,
+) -> Result<Arc<dyn RerankProvider>, KairosError> {
+    // 可由 base_url host 自动推断 provider(借鉴 EverOS),此处简化为显式 impl
+    todo!()
+}
 ```
 
 > **新增一个 provider 的全部工作量**:写一个实现文件 + 工厂加一个 `case`。这是"可插拔"在代码层面的兑现——改动局限在模块的 `providers/` 内,领域逻辑零改动。
 
 ## 检索编排接口
 
-把上面拼起来,检索层对 `store.py`(MemoryStore/Retriever 实现)暴露的入口:
+把上面拼起来,检索层对 `store.rs`(MemoryStore/Retriever 实现)暴露的入口:
 
-```python
-# modules/memory/retrieval/searcher.py(草案)
-class Searcher:
-    def __init__(self, store: VectorStore, embedder: EmbeddingProvider,
-                 tokenizer: Tokenizer, reranker: RerankProvider | None): ...
+```rust
+// crates/memory/src/retrieval/searcher.rs(草案)
+use std::sync::Arc;
+use foundation::{errors::KairosError, tenancy::TenantContext};
+use crate::contracts::{
+    embedding::EmbeddingProvider, rerank::RerankProvider,
+    tokenizer::Tokenizer, vector_store::VectorStore,
+};
+use crate::models::MemoryKind;
 
-    async def search(self, ctx: "TenantContext", *, kind: str, query: str,
-                     method: str = "hybrid", owner_id: str,
-                     metadata_filter: "MetadataFilter | None" = None,
-                     top_k: int = 10, use_rerank: bool = False) -> list[Hit]:
-        """统一检索入口。按 method 路由,内部完成召回/融合/rerank。
-        - 表由 ctx 路由到 {tenant_id}__{kind}(ADR 0013,租户物理隔离)
-        - owner_id 强制注入表内 prefilter(ADR 0009);
-          ctx 或 owner_id 缺失/无效 → 抛 ValidationError(fail-closed,绝不全量召回)
-        - metadata_filter 等值条件下推为 prefilter(过滤后召回)
-        - use_rerank=True 但 reranker is None → 抛 NotConfiguredError(fail-fast)
-        """
-        ...
+pub struct Searcher {
+    store: Arc<dyn VectorStore>,
+    embedder: Arc<dyn EmbeddingProvider>,
+    tokenizer: Arc<dyn Tokenizer>,
+    reranker: Option<Arc<dyn RerankProvider>>,
+}
+
+/// 检索方法(对外三选一);序列化为 snake_case。
+#[derive(Debug, Clone, Copy)]
+pub enum SearchMethod {
+    Vector,
+    Keyword,
+    Hybrid, // 默认
+}
+
+/// 检索参数;metadata_filter 为可选等值下推条件。
+pub struct SearchParams<'a> {
+    pub kind: MemoryKind,
+    pub query: &'a str,
+    pub method: SearchMethod,          // 默认 Hybrid
+    pub owner_id: &'a str,
+    pub metadata_filter: Option<&'a MetadataFilter>,
+    pub top_k: usize,                  // 默认 10
+    pub use_rerank: bool,              // 默认 false
+}
+
+impl Searcher {
+    /// 统一检索入口。按 method 路由,内部完成召回/融合/rerank。
+    /// - 表由 ctx 路由到 {tenant_id}__{kind}(ADR 0013,租户物理隔离)
+    /// - owner_id 强制注入表内 prefilter(ADR 0009);
+    ///   ctx 或 owner_id 缺失/无效 → KairosError::Validation(fail-closed,绝不全量召回)
+    /// - metadata_filter 等值条件下推为 prefilter(过滤后召回)
+    /// - use_rerank=true 但 reranker.is_none() → KairosError::NotConfigured(fail-fast)
+    pub async fn search(
+        &self,
+        ctx: &TenantContext,
+        params: SearchParams<'_>,
+    ) -> Result<Vec<Hit>, KairosError> {
+        todo!()
+    }
+}
 ```
 
 `Hit` 是检索层内部结果对象(id + score + 原始行),由模块转成 `RecallResponse` DTO(见 [api](./api.md))。
@@ -252,17 +347,24 @@ class Searcher:
 2. **fail-closed(默认拒绝)**:`ctx` 或 `owner_id` 缺失/无效时**抛 `ValidationError`,绝不返回全量**。"绝不无作用域查询"是铁律——跨租户泄漏的根因业界概括为"一个缺失的过滤器"。
 3. **作用域从可信上下文派生**:租户表名与 `owner_id` 由上层从**可信 `ctx`** 给出,检索层**不信任调用方自报的越权标识**。隔离断言落在确定性的检索层,不依赖 LLM(依赖 LLM 做访问控制是反模式)。
 
-```python
-# modules/memory/providers/vector/lancedb_store.py(草案,表路由 + owner 过滤)
-def _resolve_table(ctx: TenantContext, kind: str) -> str:
-    """租户物理分表路由(ADR 0013)。ctx 为空在上游已 fail-closed。"""
-    return f"{ctx.tenant_id}__{kind}"
+```rust
+// crates/memory/src/providers/vector/lancedb_store.rs(草案,表路由 + owner 过滤)
+use foundation::tenancy::TenantContext;
 
-def _owner_prefilter(owner_id: str, extra: str | None) -> str:
-    """强制 owner 过滤;与业务 metadata_filter 以 AND 合并。"""
-    # owner_id 非空由上游校验保证;为空则 fail-closed 抛 ValidationError
-    base = f"owner_id = '{owner_id}' AND deprecated = false"
-    return f"{base} AND ({extra})" if extra else base
+/// 租户物理分表路由(ADR 0013)。ctx 为空在上游已 fail-closed。
+fn resolve_table(ctx: &TenantContext, kind: &str) -> String {
+    format!("{}__{}", ctx.tenant_id(), kind)
+}
+
+/// 强制 owner 过滤;与业务 metadata_filter 以 AND 合并。
+/// owner_id 非空由上游校验保证;为空则 fail-closed 抛 KairosError::Validation。
+fn owner_prefilter(owner_id: &str, extra: Option<&str>) -> String {
+    let base = format!("owner_id = '{owner_id}' AND deprecated = false");
+    match extra {
+        Some(extra) => format!("{base} AND ({extra})"),
+        None => base,
+    }
+}
 ```
 
 > **为什么租户用分表、用户用过滤,而不是都用过滤?**(ADR 0013)租户是信任边界与合规边界——物理分表让"越权"需要拿到错误的表名(纯逻辑过滤则一处 bug 即跨租户泄漏),且 drop 表即完成合规数据删除。用户轴在租户表内,量大、增删频繁,用 `owner_id` 逻辑过滤成本最低。两轴强度匹配各自的边界性质。
@@ -291,23 +393,29 @@ def _owner_prefilter(owner_id: str, extra: str | None) -> str:
 
 召回前先回答三件事:**① 这个 query 要不要记忆?② 要哪些 kind?③ 各取多少(top_k)?**
 
-```python
-# modules/memory/retrieval/recall.py(草案,与召回函数同文件)
-from typing import Protocol, runtime_checkable
-from dataclasses import dataclass, field
+```rust
+// crates/memory/src/retrieval/recall.rs(草案,与召回函数同文件)
+use std::collections::HashMap;
+use async_trait::async_trait;
+use foundation::errors::KairosError;
 
-@dataclass
-class RoutingDecision:
-    should_recall: bool                       # 这一轮要不要召回
-    kinds: list[str] = field(default_factory=list)   # 召回哪些:semantic/episodic/procedural
-    top_k: int = 10                           # 建议取多少
-    reason: str = ""                          # 便于调试/可观测
+#[derive(Debug, Clone)]
+pub struct RoutingDecision {
+    pub should_recall: bool,   // 这一轮要不要召回
+    pub kinds: Vec<String>,    // 召回哪些:semantic/episodic/procedural(默认空)
+    pub top_k: usize,          // 建议取多少(默认 10)
+    pub reason: String,        // 便于调试/可观测(默认空)
+}
 
-@runtime_checkable
-class RecallRouter(Protocol):
-    async def route(self, query: str, *, context: dict | None = None) -> RoutingDecision:
-        """决定是否召回、召回哪些 kind、取多少。不做实际检索。"""
-        ...
+#[async_trait]
+pub trait RecallRouter: Send + Sync {
+    /// 决定是否召回、召回哪些 kind、取多少。不做实际检索。
+    async fn route(
+        &self,
+        query: &str,
+        context: Option<&HashMap<String, serde_json::Value>>,
+    ) -> Result<RoutingDecision, KairosError>;
+}
 ```
 
 - **MVP 实现是薄启发式**(`HeuristicRecallRouter`):基于 query 形态的规则——含"我/我的/上次/之前"等指代或偏好询问 → 召回 `semantic`(+ `episodic` 兜底);含"怎么做/如何处理"等任务求解 → 召回 `procedural`;纯寒暄/与用户无关的通用问题 → `should_recall=False`。甚至可配置成"总是召回 semantic"退化为旧行为。

@@ -1,0 +1,18 @@
+# foundation(L0):零业务语义底座。不依赖任何上层 crate(六层契约一,编译期强制)。
+[package]
+name = "kairos_foundation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "foundation"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

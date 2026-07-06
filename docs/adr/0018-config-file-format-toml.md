@@ -2,7 +2,7 @@
 
 - **状态**:已接受
 - **日期**:2026-07-05
-- **相关文档**:[foundation/foundation.md](../foundation/foundation.md)、[modules/model-gateway.md](../modules/model-gateway.md)
+- **相关文档**:[foundation/foundation.md](../foundation/foundation.md)、[modules/model_gateway.md](../modules/model_gateway.md)
 - **上位关系**:是 foundation 配置机制的具体化;为 model_gateway 的 tier 路由表(per-deployment 可覆写)提供承载格式。
 
 ## 背景
@@ -45,5 +45,14 @@
 - `foundation/config.py`:`KairosSettings` 增 `settings_customise_sources`,装配 TOML 双层来源;`PROJECT_CONFIG_FILE=.kairos/config.toml`、`USER_CONFIG_FILE=~/.kairos/config.toml` 路径常量。
 - `.gitignore`:`.kairos/` 改为 `.kairos/*` + `!.kairos/config.toml`,使项目配置可提交而运行时数据仍忽略。
 - model_gateway 任务落地时,tier 路由表以 TOML 表结构承载(per-deployment / 行业部署覆写走项目级文件)。
-- model-gateway.md 中的 YAML 路由表示例为**说明性**,落地时以 TOML 表达(该文档在 model_gateway 任务时同步)。
+- model_gateway.md 中的 YAML 路由表示例为**说明性**,落地时以 TOML 表达(该文档在 model_gateway 任务时同步)。
 - 文档:foundation.md 配置管理节更新加载优先级与来源装配。
+
+## 追记(2026-07-06,ADR 0019/0021 语言迁移)
+
+复核本决策,**结论维持 TOML**——决定性因素("配置阈值/provider 密集、需人手改、注释自解释")与语言无关。经历一版"切纯 TS(smol-toml + zod)"的中间修订后,随 ADR 0019 最终定为 **Rust Runtime**;以下为最终结论:
+
+- **TOML 在 Rust 是一等公民**,比在 TS 下更稳:`toml` crate 解析 + `serde` 反序列化到强类型 config 结构体,零额外心智负担。ADR 0018 选 TOML 的论据在 Rust 下不减反增。
+- 分层加载在 `foundation` crate 内自行装配(或用 `figment` 分层合并),优先级链不变:**环境变量 > `.env` > 项目 `config.toml` > 全局 `config.toml` > 代码默认值**。
+- 配置字段命名回归 snake_case(Rust 惯例,亦与 TOML 传统一致);config 结构体字段即 snake_case,与 TOML 键天然对应,无需 rename。
+- 诚实记录:JSON 零依赖但无注释,对本项目"手改自解释"主场景仍是硬伤;TOML 结论不因换语言翻转。

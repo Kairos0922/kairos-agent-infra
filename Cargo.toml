@@ -1,0 +1,43 @@
+# Kairos Agent Infra —— Rust workspace 根(ADR 0019/0021)
+#
+# 六层架构落为各自的 crate,依赖方向由 crate 依赖图在编译期物理强制
+# (下层不声明上层,上层符号即不可见)。共享依赖版本在 [workspace.dependencies]
+# 统一锁定,各 crate 用 `foo = { workspace = true }` 引用,避免版本漂移。
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/foundation",
+    "crates/memory",
+    "crates/harness",
+    "crates/assembly",
+    "crates/server",
+    "crates/protocol",
+    "apps/cli",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+
+# 共享依赖:锁定精确版本(安全约定:不用开放区间)。各 crate 按需 workspace = true 引用。
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.140"
+toml = "=1.1.2"
+thiserror = "=2.0.11"
+tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "sync"] }
+async-trait = "=0.1.86"
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["json", "env-filter"] }
+
+# 发布档:Runtime 出单二进制,优化体积与运行时(ADR 0019 本地端诉求)。
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

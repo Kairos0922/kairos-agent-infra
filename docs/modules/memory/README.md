@@ -1,6 +1,6 @@
 # 记忆模块 (Memory)
 
-记忆模块是 L1 infra 模块之一(第一批实现)。它**自包含**:领域逻辑、它依赖的存储/模型抽象、它的对外契约,全部收在本模块内(`src/kairos/modules/memory/`),只依赖底座(`foundation`),不依赖其他模块。**唯一的跨模块编排发生在 harness 层**,harness 只 import 本模块的 `contracts/`,实现由组装根注入(六层架构,见 [architecture](../../project/architecture.md))。
+记忆模块是 L1 infra 模块之一(第一批实现)。它**自包含**:领域逻辑、它依赖的存储/模型抽象、它的对外契约,全部收在本模块内(`crates/memory/src/`),只依赖底座(`foundation`),不依赖其他模块。**唯一的跨模块编排发生在 harness 层**,harness 只 import 本模块的 `contracts/`,实现由组装根注入(六层架构,见 [architecture](../../project/architecture.md))。
 
 ## 模块职责
 
@@ -15,34 +15,34 @@
 ## 模块内部结构
 
 ```
-modules/memory/
+crates/memory/src/
 ├── contracts/         # 抽象接口(两类)
-│   ├── store.py           # 对外契约:MemoryStore / Retriever(harness 消费)
-│   ├── vector_store.py    # provider 契约:VectorStore
-│   ├── embedding.py       # provider 契约:EmbeddingProvider
-│   ├── rerank.py          # provider 契约:RerankProvider
-│   └── tokenizer.py       # provider 契约:Tokenizer
-├── store.py           # MemoryStore/Retriever 实现(领域逻辑总入口)
-├── models.py          # 领域模型(MemoryBase + 三类 kind)
+│   ├── store.rs           # 对外契约:MemoryStore / Retriever(harness 消费)
+│   ├── vector_store.rs    # provider 契约:VectorStore
+│   ├── embedding.rs       # provider 契约:EmbeddingProvider
+│   ├── rerank.rs          # provider 契约:RerankProvider
+│   └── tokenizer.rs       # provider 契约:Tokenizer
+├── store.rs           # MemoryStore/Retriever 实现(领域逻辑总入口)
+├── models.rs          # 领域模型(MemoryBase + 三类 kind)
 ├── providers/         # provider 契约的具体实现(可插拔)
-│   ├── vector/lancedb_store.py   # 含租户物理分表路由(ADR 0013)
-│   ├── embedding/{openai_compat,sentence_transformer}.py
-│   ├── rerank/{cross_encoder,http_rerank}.py
-│   ├── tokenizer/jieba_tokenizer.py
-│   └── factory.py         # 配置驱动组装
+│   ├── vector/lancedb_store.rs   # 含租户物理分表路由(ADR 0013)
+│   ├── embedding/{openai_compat,sentence_transformer}.rs
+│   ├── rerank/{cross_encoder,http_rerank}.rs
+│   ├── tokenizer/jieba_tokenizer.rs
+│   └── factory.rs         # 配置驱动组装
 ├── kinds/             # 三类记忆各自的写入/淘汰逻辑
-│   ├── semantic.py
-│   ├── episodic.py
-│   └── procedural.py
+│   ├── semantic.rs
+│   ├── episodic.rs
+│   └── procedural.rs
 ├── retrieval/         # 统一检索层
-│   ├── searcher.py        # 检索编排 + 方法路由
-│   ├── fusion.py          # RRF 等融合(纯计算,同步)
-│   └── recall.py          # 向量/BM25 召回 + RecallRouter(选择性召回门控)
-# 注:trace 评估/提炼是模块外的独立关注点(ADR 0008),由 harness/distill 承担;
-#    模块对 procedural 只暴露"写入已提炼经验"(write_experience)。
+│   ├── searcher.rs        # 检索编排 + 方法路由
+│   ├── fusion.rs          # RRF 等融合(纯计算,同步)
+│   └── recall.rs          # 向量/BM25 召回 + RecallRouter(选择性召回门控)
+// 注:trace 评估/提炼是模块外的独立关注点(ADR 0008),由 harness/distill 承担;
+//    模块对 procedural 只暴露"写入已提炼经验"(write_experience)。
 ```
 
-- **对外契约**(`contracts/store.py`:`MemoryStore` / `Retriever`)是 harness 消费的稳定接口,签名首参 `ctx: TenantContext`(ADR 0012)。
+- **对外契约**(`contracts/store.rs`:`MemoryStore` / `Retriever`)是 harness 消费的稳定接口,签名首参 `ctx: &TenantContext`(ADR 0012)。
 - **provider 契约**(`VectorStore` 等)是领域逻辑依赖、由 `providers/` 实现的内部抽象。
 
 ## 模块内的依赖规则
@@ -51,15 +51,15 @@ modules/memory/
 
 ```mermaid
 flowchart LR
-    Store["store.py<br/>(MemoryStore/Retriever 实现)"] --> Kinds["kinds/ + retrieval/<br/>(领域逻辑)"]
+    Store["store.rs<br/>(MemoryStore/Retriever 实现)"] --> Kinds["kinds/ + retrieval/<br/>(领域逻辑)"]
     Kinds --> Contracts["contracts/<br/>(抽象接口)"]
-    Kinds --> Models["models.py"]
-    Factory["providers/factory.py"] -.启动时注入.-> Kinds
+    Kinds --> Models["models.rs"]
+    Factory["providers/factory.rs"] -.启动时注入.-> Kinds
     Providers["providers/<br/>(实现)"] --> Contracts
 ```
 
-- **领域逻辑(`store.py`、`kinds/`、`retrieval/searcher`)只依赖 `contracts/` 抽象**,不依赖 `providers/`,不 `import lancedb`。
-- 具体实现由 `providers/factory.py` 按配置组装,注入给领域逻辑(依赖倒置)。
+- **领域逻辑(`store.rs`、`kinds/`、`retrieval/searcher`)只依赖 `contracts/` 抽象**,不依赖 `providers/`,不 `use lancedb`。
+- 具体实现由 `providers/factory.rs` 按配置组装,注入给领域逻辑(依赖倒置)。
 - 这保证:换向量库 / 换模型 = 改 `providers/` + 一处 factory 登记,领域逻辑零改动。
 
 ## 为什么抽象接口在模块内,而不在底座
@@ -88,7 +88,7 @@ flowchart LR
 - [ADR 0007](../../adr/0007-memory-mechanism-vs-policy-timing.md):记忆模块是机制,时机与质量评估是策略;写入分 kind、召回选择性(RecallRouter + memory-as-a-tool)。
 - [ADR 0008](../../adr/0008-procedural-evaluation-decoupling.md):程序记忆的 trace 评估/提炼与记忆模块解耦,由 harness/distill 承担,模块只收已提炼经验。
 - [ADR 0009](../../adr/0009-single-multi-user-scoping-isolation.md):单/多用户作用域与隔离;隔离是机制(强制 owner prefilter + fail-closed + 契约测试),共享是策略(留阶段二)。
-- [ADR 0012](../../adr/0012-tenant-context-explicit-passing.md):TenantContext 显式传参,禁 contextvar。
+- [ADR 0012](../../adr/0012-tenant-context-explicit-passing.md):TenantContext 显式传参,禁隐式全局态。
 - [ADR 0013](../../adr/0013-lancedb-tenant-physical-tables.md):LanceDB 租户物理分表(`{tenant_id}__{kind}`),drop 表即合规删除。
 - [ADR 0015](../../adr/0015-vector-store-uplift-foundation.md):向量存储契约与 RRF 融合在 Phase 3 上提 foundation。
 - [benchmark 子项目](../benchmark/README.md):衡量"高精确率、低噪音",是上述取舍的裁判。
