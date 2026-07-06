@@ -252,7 +252,8 @@ pub trait VectorStore: Send + Sync {
 ```rust
 // crates/memory/src/providers/factory.rs(草案)
 use std::sync::Arc;
-use foundation::{config::{EmbeddingConfig, RerankConfig}, errors::KairosError};
+use foundation::errors::KairosError;
+use crate::config::{EmbeddingConfig, RerankConfig}; // 模块配置归模块 crate,不住 foundation
 use crate::contracts::{embedding::EmbeddingProvider, rerank::RerankProvider};
 use super::embedding::{OpenAiCompatEmbedding, SentenceTransformerEmbedding};
 

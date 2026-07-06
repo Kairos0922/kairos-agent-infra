@@ -1,19 +1,23 @@
-//! 配置管理:单一配置入口,实现选择全部走配置。
+//! 配置管理:分层加载机制 + 底座自足配置。
 //!
-//! 基于 `serde` + `toml`:配置反序列化到强类型结构体(带 `#[serde(default)]` 默认值)。
-//! 多来源分层合并,优先级由高到低:
+//! 本模块只提供两样东西:
+//! 1. **分层加载机制**([`load_settings`]):多来源合并成强类型配置。
+//! 2. **底座自足配置**([`KairosSettings`]):当前仅 `log_level`——不依赖任何外部资源、
+//!    底座自己就能用的横切配置。
+//!
+//! **模块业务配置不住这里**(YAGNI + foundation 零业务语义):embedding/rerank/vector_store/
+//! memory 等配置各自命名部署环境里的外部资源(哪个模型、哪个端点、哪个 key),其正确值
+//! 只有部署方知道,底座无从给出合理默认。这类配置随对应模块落地、归各自 crate;缺失时由
+//! 模块 factory fail-closed(见 [`crate::errors::KairosError::NotConfigured`])。
+//!
+//! 分层合并优先级由高到低:
 //!
 //! ```text
 //! 环境变量  >  .env  >  项目 ./.kairos/config.toml  >  全局 ~/.kairos/config.toml  >  代码默认值
 //! ```
 //!
-//! 沿用 TOML(ADR 0018,Rust 下为一等公民):支持注释、适合手改。各作用域共用同一
-//! [`KairosSettings`] 结构——文件只需写要覆盖的字段,字段天然一致;项目级文件覆盖全局级文件。
-//!
-//! 约定:
-//! - 实现选择是配置项(`impl` 字段),不是代码分支;由各模块 factory 读取决定实例化哪个实现。
-//! - 密钥永不进配置值,只存环境变量名(`api_key_env`),运行时按名读取。
-//! - embedding 维度必须与向量列维度一致,启动时校验,不一致 fail-fast(由消费方执行)。
+//! 用 TOML(ADR 0018,Rust 下为一等公民):支持注释、适合手改。各作用域共用同一强类型
+//! 结构——文件只需写要覆盖的字段。密钥永不进配置值,只存环境变量名,运行时按名读取。
 //!
 //! 详见 docs/foundation/foundation.md。
 
@@ -25,142 +29,26 @@ use toml::Value;
 
 use crate::errors::KairosError;
 
-/// 环境变量前缀与嵌套分隔符(如 `KAIROS_VECTOR_STORE__URI` 映射到 vector_store.uri)。
+/// 环境变量前缀与嵌套分隔符(如 `KAIROS_LOG_LEVEL` → log_level)。
 const ENV_PREFIX: &str = "KAIROS_";
 const ENV_NESTED_DELIMITER: &str = "__";
 
-/// 向量库配置。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct VectorStoreConfig {
-    pub r#impl: String,
-    pub uri: String,
-    /// LRU 索引缓存上限(字节),防止 optimize() 累积的 reader FD 泄漏到 EMFILE(借鉴 EverOS 实测)。
-    pub index_cache_size_bytes: u64,
-}
-
-impl Default for VectorStoreConfig {
-    fn default() -> Self {
-        Self {
-            r#impl: "lancedb".to_string(),
-            uri: "./.kairos/lancedb".to_string(),
-            index_cache_size_bytes: 16 * 1024 * 1024,
-        }
-    }
-}
-
-/// embedding 模型配置。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct EmbeddingConfig {
-    /// openai_compat | sentence_transformer
-    pub r#impl: String,
-    pub model: String,
-    /// 必须与向量列维度一致,启动校验。
-    pub dim: u32,
-    /// 本地 vLLM/Ollama 也走这里;None 用 provider 默认端点。
-    pub base_url: Option<String>,
-    /// 只存环境变量名,不存密钥本身。
-    pub api_key_env: String,
-    pub batch_size: u32,
-    pub max_concurrent: u32,
-}
-
-impl Default for EmbeddingConfig {
-    fn default() -> Self {
-        Self {
-            r#impl: "openai_compat".to_string(),
-            model: "BAAI/bge-m3".to_string(),
-            dim: 1024,
-            base_url: None,
-            api_key_env: "KAIROS_EMBED_API_KEY".to_string(),
-            batch_size: 32,
-            max_concurrent: 8,
-        }
-    }
-}
-
-/// rerank 模型配置。默认关闭,按需开启。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RerankConfig {
-    pub enabled: bool,
-    /// cross_encoder | http_rerank
-    pub r#impl: String,
-    pub model: String,
-    pub base_url: Option<String>,
-    pub api_key_env: String,
-}
-
-impl Default for RerankConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            r#impl: "cross_encoder".to_string(),
-            model: "BAAI/bge-reranker-v2-m3".to_string(),
-            base_url: None,
-            api_key_env: "KAIROS_RERANK_API_KEY".to_string(),
-        }
-    }
-}
-
-/// 记忆模块行为配置。
+/// 底座自足配置。
 ///
-/// 字段对齐 ADR 0004-0009 与 docs/modules/memory/memory-types.md;procedural 的 trace
-/// 提炼/评估门控在模块外(harness/distill,ADR 0008),其参数不在此。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MemoryConfig {
-    /// 写入冲突去重:LLM 驱动 ADD/UPDATE/DELETE 前,向量检索 top-K 候选的相似度阈值(ADR 0004/0005)。
-    pub dedup_threshold: f32,
-    /// episodic 显著性门控:低于此值的内容不写入(ADR 0006)。
-    pub episodic_salience_threshold: f32,
-    /// episodic 归档窗:超过此天数且久未命中的情景记忆批量归档(非硬删,ADR 0005/0006)。
-    pub episodic_archive_after_days: u32,
-    /// procedural 低效淘汰:effectiveness 长期低于此阈值的经验标记 deprecated(ADR 0005)。
-    pub procedural_effectiveness_floor: f32,
-    /// 选择性召回:是否默认启用 RecallRouter 门控(ADR 0007;默认关,由 harness 显式开)。
-    pub recall_router_enabled: bool,
-}
-
-impl Default for MemoryConfig {
-    fn default() -> Self {
-        Self {
-            dedup_threshold: 0.92,
-            episodic_salience_threshold: 0.5,
-            episodic_archive_after_days: 30,
-            procedural_effectiveness_floor: 0.2,
-            recall_router_enabled: false,
-        }
-    }
-}
-
-/// Kairos 全局配置。
-///
-/// 记忆相关配置目前直接挂在顶层。未来出现第二个模块、配置确有交叉时,再决定是否按模块
-/// 分组,不提前(YAGNI)。模型(ChatModel)配置由 model_gateway 任务落地。
+/// 只放不依赖部署环境、底座自己就能用的横切配置。目前仅 `log_level`(由 logging 消费)。
+/// 模块业务配置随模块落地、归各自 crate,不在此堆积(见模块级文档)。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KairosSettings {
-    pub vector_store: VectorStoreConfig,
-    pub embedding: EmbeddingConfig,
-    pub rerank: RerankConfig,
-    pub memory: MemoryConfig,
+    /// 日志级别名(如 "INFO" / "DEBUG"),由 logging 消费。
     pub log_level: String,
-    pub trace_enabled: bool,
 }
 
-// 不派生 Default:派生会对 log_level 给出空串 ""，与期望的 "INFO" 不符。手写单一真相源,
-// 避免"派生 Default 返回空串、加载路径另用一份默认"的双份默认陷阱。
+// 手写单一真相源的 Default:派生会给 log_level 空串 "",与期望的 "INFO" 不符。
 impl Default for KairosSettings {
     fn default() -> Self {
         Self {
-            vector_store: VectorStoreConfig::default(),
-            embedding: EmbeddingConfig::default(),
-            rerank: RerankConfig::default(),
-            memory: MemoryConfig::default(),
             log_level: "INFO".to_string(),
-            trace_enabled: false,
         }
     }
 }
@@ -194,8 +82,19 @@ impl Default for LoadOptions {
 /// # Errors
 /// TOML 解析失败或字段类型非法时返回 [`KairosError::Config`],fail-fast。
 pub fn load_settings(opts: &LoadOptions) -> Result<KairosSettings, KairosError> {
-    // 以顶层默认值作为最底层,逐层用更高优先级来源覆盖。
-    let mut merged = to_value(&KairosSettings::default())?;
+    let merged = merge_layers::<KairosSettings>(opts)?;
+    merged.try_into().map_err(|e: toml::de::Error| {
+        KairosError::config("配置校验失败").with_detail("reason", e.to_string())
+    })
+}
+
+/// 分层合并出 `toml::Value`(未反序列化)。以 `T::default()` 为最底层基底,逐层用更高
+/// 优先级来源覆盖。泛型于目标结构:环境变量的类型强制按基底同位置字段的既有类型进行。
+fn merge_layers<T>(opts: &LoadOptions) -> Result<Value, KairosError>
+where
+    T: Default + Serialize,
+{
+    let mut merged = to_value(&T::default())?;
 
     // 全局 TOML → 项目 TOML(后者覆盖前者)。
     merge_into(&mut merged, load_toml_file(&opts.user_config_file)?);
@@ -210,18 +109,16 @@ pub fn load_settings(opts: &LoadOptions) -> Result<KairosSettings, KairosError> 
     };
     merge_env_into(&mut merged, env_to_value(&env_pairs));
 
-    merged.try_into().map_err(|e: toml::de::Error| {
-        KairosError::config("配置校验失败").with_detail("reason", e.to_string())
-    })
+    Ok(merged)
 }
 
 /// 把强类型配置序列化为 `toml::Value`,作为合并基底。
-fn to_value(settings: &KairosSettings) -> Result<Value, KairosError> {
+fn to_value<T: Serialize>(settings: &T) -> Result<Value, KairosError> {
     Value::try_from(settings)
         .map_err(|e| KairosError::config("默认配置序列化失败").with_detail("reason", e.to_string()))
 }
 
-/// 读取并解析一个 TOML 文件;文件缺失返回 None 对应的空表(不报错,回落默认值)。
+/// 读取并解析一个 TOML 文件;文件缺失返回空表(不报错,回落默认值)。
 fn load_toml_file(path: &Path) -> Result<Value, KairosError> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -412,6 +309,8 @@ mod tests {
         unique
     }
 
+    // ---- KairosSettings(生产 schema):只验证底座自足配置的行为 ----
+
     #[test]
     fn default_impl_uses_info_not_empty() {
         // 守护单一真相源:Default 必须给出 "INFO" 而非派生的空串。
@@ -419,13 +318,72 @@ mod tests {
     }
 
     #[test]
-    fn defaults_when_no_file() {
+    fn settings_defaults_when_no_source() {
         let dir = tmpdir();
         let s = load_settings(&opts_in(&dir)).unwrap();
         assert_eq!(s.log_level, "INFO");
-        assert_eq!(s.embedding.model, "BAAI/bge-m3");
-        assert_eq!(s.embedding.dim, 1024);
-        assert_eq!(s.vector_store.r#impl, "lancedb");
+    }
+
+    #[test]
+    fn settings_env_overrides_default() {
+        let dir = tmpdir();
+        let mut opts = opts_in(&dir);
+        opts.env = Some(env_pairs(&[("KAIROS_LOG_LEVEL", "ERROR")]));
+        let s = load_settings(&opts).unwrap();
+        assert_eq!(s.log_level, "ERROR");
+    }
+
+    // ---- 分层加载机制:用 fixture 结构覆盖嵌套 / 合并 / 类型强制 ----
+    //
+    // 生产 schema(KairosSettings)当前只有单个标量字段,不足以行使嵌套合并与类型强制。
+    // 机制服务的是后续模块配置(model_gateway 等,含 base_url/dim/重试数等嵌套强类型字段),
+    // 故此处用一个带嵌套 + 多类型字段的测试专用结构充分验证机制本身,而不为"有东西可测"
+    // 在生产 schema 里养字段。
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[serde(default)]
+    struct FixtureSection {
+        name: String,  // 字符串字段:值像数字时不得被误判
+        count: u32,    // 整数字段:env 字符串应解析为整数
+        ratio: f64,    // 浮点字段
+        enabled: bool, // 布尔字段
+        endpoint: Option<String>,
+    }
+
+    impl Default for FixtureSection {
+        fn default() -> Self {
+            Self {
+                name: "default-name".to_string(),
+                count: 10,
+                ratio: 0.5,
+                enabled: false,
+                endpoint: None,
+            }
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
+    #[serde(default)]
+    struct Fixture {
+        section: FixtureSection,
+        top_level: String,
+    }
+
+    /// 用 fixture 走一遍分层合并 + 反序列化(复用生产 merge_layers 机制)。
+    fn load_fixture(opts: &LoadOptions) -> Result<Fixture, KairosError> {
+        let merged = merge_layers::<Fixture>(opts)?;
+        merged.try_into().map_err(|e: toml::de::Error| {
+            KairosError::config("fixture 校验失败").with_detail("reason", e.to_string())
+        })
+    }
+
+    #[test]
+    fn fixture_defaults_when_no_source() {
+        let dir = tmpdir();
+        let f = load_fixture(&opts_in(&dir)).unwrap();
+        assert_eq!(f.section.name, "default-name");
+        assert_eq!(f.section.count, 10);
+        assert_eq!(f.section.endpoint, None);
     }
 
     #[test]
@@ -434,18 +392,17 @@ mod tests {
         let proj = write(
             &dir,
             "proj.toml",
-            "log_level = \"DEBUG\"\n\n[embedding]\nmodel = \"custom-model\"\nbase_url = \"http://localhost:8000/v1\"\n",
+            "top_level = \"x\"\n\n[section]\nname = \"custom\"\nendpoint = \"http://localhost:8000/v1\"\n",
         );
         let mut opts = opts_in(&dir);
         opts.project_config_file = proj;
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.log_level, "DEBUG");
-        assert_eq!(s.embedding.model, "custom-model");
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.name, "custom");
         assert_eq!(
-            s.embedding.base_url.as_deref(),
+            f.section.endpoint.as_deref(),
             Some("http://localhost:8000/v1")
         );
-        assert_eq!(s.embedding.dim, 1024); // 未覆盖回落默认
+        assert_eq!(f.section.count, 10); // 未覆盖回落默认
     }
 
     #[test]
@@ -454,26 +411,26 @@ mod tests {
         let user = write(
             &dir,
             "user.toml",
-            "log_level = \"WARNING\"\n\n[embedding]\nmodel = \"user-model\"\n",
+            "[section]\nname = \"user-name\"\ncount = 1\n",
         );
-        let proj = write(&dir, "proj2.toml", "[embedding]\nmodel = \"proj-model\"\n");
+        let proj = write(&dir, "proj2.toml", "[section]\nname = \"proj-name\"\n");
         let mut opts = opts_in(&dir);
         opts.user_config_file = user;
         opts.project_config_file = proj;
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.embedding.model, "proj-model"); // 项目级优先
-        assert_eq!(s.log_level, "WARNING"); // 项目级未设,回落用户级
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.name, "proj-name"); // 项目级优先
+        assert_eq!(f.section.count, 1); // 项目级未设,回落用户级
     }
 
     #[test]
     fn env_overrides_file() {
         let dir = tmpdir();
-        let proj = write(&dir, "proj3.toml", "[embedding]\nmodel = \"file-model\"\n");
+        let proj = write(&dir, "proj3.toml", "[section]\nname = \"file-name\"\n");
         let mut opts = opts_in(&dir);
         opts.project_config_file = proj;
-        opts.env = Some(env_pairs(&[("KAIROS_EMBEDDING__MODEL", "env-model")]));
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.embedding.model, "env-model"); // 环境变量最高优先级
+        opts.env = Some(env_pairs(&[("KAIROS_SECTION__NAME", "env-name")]));
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.name, "env-name"); // 环境变量最高优先级
     }
 
     #[test]
@@ -481,21 +438,39 @@ mod tests {
         let dir = tmpdir();
         let mut opts = opts_in(&dir);
         opts.env = Some(env_pairs(&[
-            ("KAIROS_VECTOR_STORE__URI", "/custom/lancedb"),
-            ("KAIROS_LOG_LEVEL", "ERROR"),
+            ("KAIROS_SECTION__ENDPOINT", "/custom/ep"),
+            ("KAIROS_TOP_LEVEL", "tl"),
         ]));
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.vector_store.uri, "/custom/lancedb");
-        assert_eq!(s.log_level, "ERROR");
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.endpoint.as_deref(), Some("/custom/ep"));
+        assert_eq!(f.top_level, "tl");
     }
 
     #[test]
-    fn env_typed_field_parsed() {
+    fn env_typed_fields_parsed() {
+        // 数字/浮点/布尔字段:env 字符串按基底类型强制解析。
         let dir = tmpdir();
         let mut opts = opts_in(&dir);
-        opts.env = Some(env_pairs(&[("KAIROS_EMBEDDING__DIM", "768")]));
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.embedding.dim, 768); // 字符串 "768" 解析为整数并反序列化到 u32
+        opts.env = Some(env_pairs(&[
+            ("KAIROS_SECTION__COUNT", "768"),
+            ("KAIROS_SECTION__RATIO", "0.92"),
+            ("KAIROS_SECTION__ENABLED", "true"),
+        ]));
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.count, 768);
+        assert_eq!(f.section.ratio, 0.92);
+        assert!(f.section.enabled);
+    }
+
+    #[test]
+    fn string_field_keeps_numeric_looking_value() {
+        // 回归:字符串字段的值恰好像数字/布尔字面量时,不得被误判类型。
+        // 类型强制按默认值基底的既有类型进行——String 字段原样保留字符串。
+        let dir = tmpdir();
+        let mut opts = opts_in(&dir);
+        opts.env = Some(env_pairs(&[("KAIROS_SECTION__NAME", "123")]));
+        let f = load_fixture(&opts).unwrap();
+        assert_eq!(f.section.name, "123"); // 不被转成 Integer 而致反序列化失败
     }
 
     #[test]
@@ -504,17 +479,17 @@ mod tests {
         let env_file = write(
             &dir,
             "test.env",
-            "KAIROS_EMBEDDING__MODEL=\"dotenv-model\"\n# 注释\nIGNORED_NO_EQ\n",
+            "KAIROS_SECTION__NAME=\"dotenv-name\"\n# 注释\nIGNORED_NO_EQ\n",
         );
         let mut opts = opts_in(&dir);
         opts.env_file = env_file.clone();
         // .env 生效(引号被剥离)
-        let s1 = load_settings(&opts).unwrap();
-        assert_eq!(s1.embedding.model, "dotenv-model");
+        let f1 = load_fixture(&opts).unwrap();
+        assert_eq!(f1.section.name, "dotenv-name");
         // 真实环境变量覆盖 .env
-        opts.env = Some(env_pairs(&[("KAIROS_EMBEDDING__MODEL", "real-env")]));
-        let s2 = load_settings(&opts).unwrap();
-        assert_eq!(s2.embedding.model, "real-env");
+        opts.env = Some(env_pairs(&[("KAIROS_SECTION__NAME", "real-env")]));
+        let f2 = load_fixture(&opts).unwrap();
+        assert_eq!(f2.section.name, "real-env");
     }
 
     #[test]
@@ -530,28 +505,13 @@ mod tests {
     }
 
     #[test]
-    fn string_field_keeps_numeric_looking_value() {
-        // 回归:字符串字段的值恰好像数字/布尔字面量时,不得被误判类型。
-        // 类型强制按默认值基底的既有类型进行——String 字段原样保留字符串。
-        let dir = tmpdir();
-        let mut opts = opts_in(&dir);
-        opts.env = Some(env_pairs(&[
-            ("KAIROS_EMBEDDING__MODEL", "123"),
-            ("KAIROS_VECTOR_STORE__IMPL", "true"),
-        ]));
-        let s = load_settings(&opts).unwrap();
-        assert_eq!(s.embedding.model, "123"); // 不被转成 Integer 而致反序列化失败
-        assert_eq!(s.vector_store.r#impl, "true"); // 不被转成 Boolean
-    }
-
-    #[test]
     fn invalid_field_type_errors() {
         let dir = tmpdir();
         let mut opts = opts_in(&dir);
-        opts.env = Some(env_pairs(&[("KAIROS_EMBEDDING__DIM", "not-a-number")]));
-        // "not-a-number" 落为字符串,反序列化到 u32 失败 → Config 错误。
+        opts.env = Some(env_pairs(&[("KAIROS_SECTION__COUNT", "not-a-number")]));
+        // "not-a-number" 落为字符串,强制到整数基底失败保留字符串,反序列化到 u32 失败 → Config 错误。
         assert!(matches!(
-            load_settings(&opts),
+            load_fixture(&opts),
             Err(KairosError::Config { .. })
         ));
     }

@@ -85,7 +85,9 @@ kairos-agent-infra/
 
 ## 配置管理
 
-**单一配置入口,分层结构,实现选择全部走配置。** 用 `serde` + `toml`:配置反序列化到强类型结构体(带 `#[serde(default)]` 默认值与校验),支持多来源分层合并。
+foundation 只提供两样东西:**分层加载机制** + **底座自足配置**。用 `serde` + `toml`:配置反序列化到强类型结构体(带 `#[serde(default)]`),支持多来源分层合并。
+
+**模块业务配置不住这里**(YAGNI + foundation 零业务语义):embedding/rerank/vector_store/memory 等配置各自命名部署环境里的外部资源(哪个模型、哪个端点、哪个 key),其正确值只有部署方知道,底座给不出合理默认——预置具体默认(如某个模型名)只会制造"看似配好、实则跑不起来"的假就绪、掩盖漏配。故这类配置随对应模块落地、归各自 crate;缺失时由模块 factory fail-closed(`KairosError::NotConfigured`,附配置指引 hint)。foundation 自足配置目前仅 `log_level`(由 logging 消费,不依赖任何外部资源)。
 
 **加载来源与优先级(由高到低):**
 
@@ -93,59 +95,28 @@ kairos-agent-infra/
 环境变量  >  .env  >  项目 ./.kairos/config.toml  >  全局 ~/.kairos/config.toml  >  代码默认值
 ```
 
-配置文件用 **TOML**(ADR 0018,Rust 下 TOML 为一等公民):支持注释、适合手改;`toml` crate 解析 + `serde` 反序列化到强类型结构体。各作用域共用同一 `KairosSettings` 结构(文件只写要覆盖的字段,字段天然一致),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源以 `toml::Value` 为中间态深合并(高优先级覆盖低优先级)后反序列化到强类型结构体。
+配置文件用 **TOML**(ADR 0018,Rust 下 TOML 为一等公民):支持注释、适合手改;`toml` crate 解析 + `serde` 反序列化到强类型结构体。各作用域共用同一结构(文件只写要覆盖的字段),项目级 `./.kairos/config.toml` 覆盖全局级 `~/.kairos/config.toml`(与 Claude Code 的 `.claude/` 双层约定同构)。缺失的 TOML 文件直接跳过、回落默认值。多来源以 `toml::Value` 为中间态深合并(高优先级覆盖低优先级)后反序列化到强类型结构体。
 
 ```rust
 // foundation/src/config.rs(节选)
 use serde::{Deserialize, Serialize};
 
-// 各配置结构派生 Serialize + Deserialize(Serialize 供分层合并时把默认值序列化为合并基底),
-// 并各自 impl Default 给出字段默认值(此处从略)。#[serde(default)] 使文件只需写要覆盖的字段。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct EmbeddingConfig {
-    pub r#impl: String,       // openai_compat | sentence_transformer(raw 标识符,serde 序列化为 "impl")
-    pub model: String,        // 默认 "BAAI/bge-m3"
-    pub dim: u32,             // 必须与向量列维度一致,启动校验
-    pub base_url: Option<String>,   // 本地 vLLM/Ollama 也走这里
-    pub api_key_env: String,  // 只存环境变量名,不存密钥
-    pub batch_size: u32,
-    pub max_concurrent: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MemoryConfig {
-    pub dedup_threshold: f32,             // 写入去重相似度阈值(ADR 0004/0005)
-    pub episodic_salience_threshold: f32, // episodic 显著性门控(ADR 0006)
-    pub episodic_archive_after_days: u32,
-    pub procedural_effectiveness_floor: f32,
-    pub recall_router_enabled: bool,      // 选择性召回默认关(ADR 0007)
-}
-
-// 记忆相关配置(vector_store/embedding/rerank/memory)目前直接挂在顶层;
-// 未来出现第二个模块、配置确有交叉时再决定是否分组,不提前。ChatModel 配置由 model_gateway 落地。
+/// 底座自足配置:只放不依赖部署环境、底座自己就能用的横切配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct KairosSettings {
-    pub vector_store: VectorStoreConfig,
-    pub embedding: EmbeddingConfig,
-    pub rerank: RerankConfig,
-    pub memory: MemoryConfig,
-    pub log_level: String,
-    pub trace_enabled: bool,
+    pub log_level: String, // 由 logging 消费;手写 Default 给 "INFO"
 }
 
 // load_settings():分层合并 全局TOML → 项目TOML → .env → 环境变量(后者覆盖前者),
-// 再反序列化 + 校验。环境变量键 KAIROS_VECTOR_STORE__URI 映射到 vector_store.uri。
+// 再反序列化 + 校验。合并机制泛型于目标结构(merge_layers<T>),后续模块配置复用同一机制。
 ```
 
 约定:
 
-- **实现选择是配置项**(`impl`),不是代码分支。模块的 factory 读 `impl` 决定实例化哪个实现。
-- **接自己的模型/端点走配置**:openai_compat 一个实现吃 OpenAI 及一切兼容端点(vLLM/Ollama/国产厂商),用户在 `.kairos/config.toml` 配 `base_url + model + api_key_env` 即可,零改码。
+- **模块配置随模块落地、归各自 crate**;身份/选型字段(模型、维度、端点、api_key_env)不设默认、必填,缺失 fail-closed,不在底座预置会腐烂的默认值(应用层不自带模型)。
+- **环境变量类型强制按默认值基底的既有字段类型进行**:`KAIROS_SECTION__COUNT=768` 解析为整数,而字符串字段值恰好像数字(如模型名 `123`)原样保留字符串,不盲猜。环境变量键 `KAIROS_SECTION__FIELD` 映射到 `section.field`(`__` 分隔嵌套,转 snake_case)。
 - **密钥永不进配置值**,只存环境变量名(`api_key_env`),运行时按名读取。不在配置文件、不在日志出现明文。
-- **`dim` 一致性**:embedding 维度必须等于向量列维度,启动校验,不一致 fail-fast。
 
 ### 租户上下文(tenancy)
 
@@ -269,7 +240,7 @@ info!(kind = "semantic", method = "hybrid", n_candidates = 42, latency_ms = 18.3
 ### Trace 接入点
 
 ```rust
-// foundation/src/tracing.rs —— 基于 tracing crate 的 span;trace_enabled=false 时零开销。
+// foundation/src/tracing.rs —— 基于 tracing crate 的 span;observability 关闭时零开销。
 // 关键路径用 #[tracing::instrument] 或显式 span 包裹:
 #[tracing::instrument(skip(self), fields(kind = %kind))]
 async fn recall(&self, ctx: &TenantContext, req: RecallRequest) -> Result<RecallResponse, KairosError> { /* ... */ }

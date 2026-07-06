@@ -22,7 +22,7 @@ use crate::errors::KairosError;
 /// impl 名 → 构造器 的类型化注册表。
 ///
 /// - `T`:被注册的能力类型(如 `Box<dyn VectorStore>`)。
-/// - `A`:构造器入参类型(如模块配置 `&VectorStoreConfig`);无参时用 `()`。
+/// - `A`:构造器入参类型(如模块自己的配置结构体引用);无参时用 `()`。
 ///
 /// 构造器为 `Fn(A) -> T`,可多次调用(每次按配置造一个新实例)。
 pub struct Registry<T, A = ()> {
