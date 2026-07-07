@@ -85,3 +85,7 @@ kairos-agent-infra/
 - `protocol` crate 与 `protocol-ts` package 是协议的两侧事实源,需保持对齐(CI 校验或代码生成,后续任务定)。
 - 桌面壳(Tauri vs Electron)选型**暂缓**,不阻塞 Runtime 与协议落地;UI 先以能连 Runtime 的最小客户端验证。
 - foundation.md、architecture.md、AGENTS.md 的目录树/命令/命名随之更新。
+
+## 追记(2026-07-07,ADR 0022)
+
+本 ADR 结论 1「Runtime 即服务,永远一份」中的"一份"指**一份 Runtime *实现***;其生产部署拓扑由 [ADR 0022](./0022-deployment-topology-cell-per-tenant.md) 明确为"每租户(机构)一个相互隔离的 cell + 前置路由"。本 ADR 的单一 Rust 进程模型(+ MCP/sandbox 子进程)、Monorepo 结构、Cargo crate 边界强制结论不变。

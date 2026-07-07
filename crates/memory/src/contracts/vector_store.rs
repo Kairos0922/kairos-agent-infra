@@ -16,7 +16,9 @@ pub type StoreRow = BTreeMap<String, serde_json::Value>;
 /// 向量检索/存储的可选参数(where 前置过滤 + limit)。
 #[derive(Debug, Clone, Default)]
 pub struct SearchParams<'a> {
-    /// SQL 风格前置过滤条件(如 owner_id 等值下推);None 表示不过滤。
+    /// SQL 风格业务元数据前置过滤(如 metadata 等值下推);None 表示不过滤。
+    /// **不承载租户 / owner 隔离条件**——隔离由 memory 领域层从 `ctx` 强制注入
+    /// (ADR 0013/0023),不经调用方拼入 where_clause。
     pub where_clause: Option<&'a str>,
     /// 返回上限。
     pub limit: usize,
@@ -44,7 +46,10 @@ pub trait VectorStore: Send + Sync {
         params: &SearchParams<'_>,
     ) -> Result<Vec<StoreRow>, KairosError>;
 
-    /// 按 SQL 条件删除,返回删除行数(软删除)。
+    /// 按 SQL 条件**物理删除**行,返回删除行数。
+    ///
+    /// 注:检索隐藏用领域层 `deprecated` 标记(软删),不走这里;本方法是物理删除,
+    /// 是 per-user 合规抹除与 owner 级清理的底层原语(ADR 0024)。
     async fn delete(&self, table: &str, where_clause: &str) -> Result<usize, KairosError>;
 
     /// 索引维护:把新增数据并入索引,避免 flat scan 退化。

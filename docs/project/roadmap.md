@@ -21,7 +21,8 @@ run 走查未触碰 harness/modules/foundation 任何契约,全部行业
   (仅 strong/fast)+ 基础重试
 - observability:StepSink + TraceQuery 最小实现(SQLite)
 - harness/loop + harness/context:状态机 + 分区组装
-  (压缩 / scope 推断先做最简版本)
+  (压缩 / scope 推断先做最简版本);loop 预算树(max_turns/tokens/cost/deadline)
+  为**同步执法**——触发即进入优雅收尾,不靠事后记账
 - session-hitl:SessionStore(SQLite)+ 审批流
 - tools:builtin 全集([tools §2](../modules/tools.md))+ Executor
 - memory:契约 + LanceDB provider + 写入管线 + hybrid 检索
@@ -43,7 +44,9 @@ run 走查未触碰 harness/modules/foundation 任何契约,全部行业
 ## Phase 4:教育行业验证(目标:零改码命题的代码级验证)
 
 - assembly 层(Profile/Skill 加载器 + 装配期校验)
-- server 层(认证 / API / SSE / 配额)
+- server 层(用户级认证(ADR 0023)/ API / SSE / 配额);
+  **治理=执法而非记账**:每租户**同步准入控制**(超预算 / 超频在花钱前拒绝)+ 每租户并发 run 上限,
+  后台 LLM 花费(distill / writeback / re-embed)一并纳入预算——model_gateway 只记账,执法在 server
 - education Profile 落地(裁剪范围:1 学科 + 4 Skill,
   不含 MCP / PPT 渲染 / subagent,见 [education](../verticals/education.md))
 - **验收**:上线全程**零修改 harness/modules/foundation 代码**
@@ -62,7 +65,8 @@ run 走查未触碰 harness/modules/foundation 任何契约,全部行业
 | 底座抽象不足或过度 | 中 | S16 纸上演练已做一轮验证;Phase 4 教育落地是代码级试金石,失败即回补设计而非打补丁 |
 | 依赖方向腐化 | 中 | Cargo crate 依赖边界在编译期强制(分层/模块独立/harness 禁触 providers),随 crate 创建逐层激活 |
 | 零改码命题失守 | 高 | 全项目持续验收标准;任何行业需求若需改底座,先回架构文档修契约,再实现 |
-| 单机容量上限 | 低 | Phase 2–4 单机形态是 Non-goal 边界内的选择;量到了再评估 |
+| 成本失控(无同步准入) | 中 | 每租户同步准入 + 并发上限(Phase 4 server 执法);后台 LLM 花费纳入预算,不止 per-run 记账 |
+| 单机 cell 容量上限 | 低 | 生产按每租户一个 cell 部署(ADR 0022),扩容=加 cell;单 cell 内机构级负载到顶再评估 cell 内分片 |
 
 ---
 

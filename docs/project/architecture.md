@@ -9,7 +9,7 @@
               │
    ── agent-events 协议 + 控制 API(稳定跨语言边界)──
               │
-┌───────── Rust Agent Runtime(永远一份)─────────┐
+┌───────── Rust Agent Runtime(一份实现)─────────┐
 │ L4 server    控制API/事件推送(SSE)/认证/配额   │ TenantContext 唯一构造点
 │ L3 assembly  Profile/Skill/Registry             │ 声明式,无运行时逻辑
 │ L2 harness   Loop/Context/Scheduler/SubAgent/Session/HITL/Permission/EventBus
@@ -19,7 +19,7 @@
 └──────────────────────────────────────────────────┘
 ```
 
-- **Runtime 即服务,永远一份**:L0–L4 + Adapter 是一个长运行 Rust 进程;所有入口(CLI / Desktop / Cloud / API)都是它的 L5 客户端,经同一套稳定边界(agent-events + 控制 API)接入(ADR 0021)。
+- **Runtime 即服务,一份实现**:L0–L4 + Adapter 是一个长运行 Rust 进程;所有入口(CLI / Desktop / Cloud / API)都是它的 L5 客户端,经同一套稳定边界(agent-events + 控制 API)接入(ADR 0021)。生产按**每租户(机构)一个相互隔离的 cell** 部署,前置路由按 `tenant_id` 分发——"Cloud" 客户端面对的是路由层而非单一进程,故障 / 发布 / 数据删除的爆炸半径均为单机构(ADR 0022)。
 - **语言分工**(ADR 0019):Runtime = Rust;UI/客户端 = TypeScript。跨语言边界只有 Runtime↔UI 一处,是协议/IPC 边界,非函数调用。
 - **Adapter 在 Rust,MCP 走子进程**:Runtime 自包含、无跨语言热路径;MCP 本是子进程协议,天然跨进程(ADR 0021)。
 
@@ -88,8 +88,8 @@ cli 为参考实现,只消费 server API。行业 APP 独立仓库,
 
 ## 3. 租户模型
 
-- 边界:信任边界在 tenant 级(API Key);user_id 由客户端声明,
-  受 tenant key 约束。用户级强认证留 Authenticator 扩展位。
+- 边界:信任边界在 tenant 级(API Key);**user_id 由认证结果派生,不接受客户端自由声明**(ADR 0023)——
+  同租户内教师间隔离是产品命脉与未成年人 PII 合规刚需,须认证;用户级认证(per-user token / 机构 OIDC-SSO)是 Authenticator 的新实现。
 - 隔离不变量:租户是硬边界——memory 按 `{tenant_id}__{kind}` 物理分表
   (ADR 0013)、knowledge/session/observability 按 `tenant_id` 列强制过滤;
   表内再按 `owner_id`(user)过滤。禁止跨租户召回,缺作用域 fail-closed,

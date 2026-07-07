@@ -104,7 +104,7 @@ docs/
 
 | 文档 | 内容 |
 |------|------|
-| [ADR 索引](./adr/README.md) | 0001–0021 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与依赖契约、向量存储上提、sub-agent 为工具、scope 推断、配置文件用 TOML、语言与运行时选型(Rust + TypeScript)、CPU 下沉策略、Rust Runtime 架构与仓库结构。 |
+| [ADR 索引](./adr/README.md) | 0001–0024 全部决策(背景/候选/结论/理由/影响)。含:LanceDB 选型、RRF、抽象归模块、不做图、衰减/删除分离、认知功能分类、机制/策略分离、procedural 解耦、单/多用户隔离、API Key 认证、模型契约归属、TenantContext 显式传参、租户物理分表、六层命名与依赖契约、向量存储上提、sub-agent 为工具、scope 推断、配置文件用 TOML、语言与运行时选型(Rust + TypeScript)、CPU 下沉策略、Rust Runtime 架构与仓库结构、部署拓扑(每租户一个 cell)、用户级认证、记忆数据版本化与合规生命周期。 |
 
 ## 阅读顺序建议
 

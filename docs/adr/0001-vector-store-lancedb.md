@@ -35,3 +35,7 @@
 ## 依据来源
 
 LanceDB 官方文档(docs.lancedb.com),详细引用见 [tradeoffs.md 依据来源汇总](../modules/memory/tradeoffs.md)。
+
+## 追记(2026-07-07,ADR 0022)
+
+本 ADR"第一阶段单机嵌入式"前提由 [ADR 0022](./0022-deployment-topology-cell-per-tenant.md) 的 cell-per-tenant 拓扑承载:每机构一个 Runtime cell 各自持有嵌入式 LanceDB 本地卷,使嵌入式选型在"1000+ 用户 / 数十~数百机构"目标规模下依然成立(每 cell 仍是单机嵌入式),并让 `drop_table` / 销卷成为单机构级合规删除的正解。选型结论不变。

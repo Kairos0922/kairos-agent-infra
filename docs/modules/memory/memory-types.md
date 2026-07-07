@@ -149,6 +149,7 @@ pub struct MemoryBase {
     pub id: String,                  // 全局唯一:format!("{owner_id}:{kind}:{ulid}")
     pub kind: MemoryKind,
     pub owner_id: String,            // 同租户内实体归属(user/agent),强制过滤字段
+    pub schema_version: u32,         // 写入时的 schema 版本,驱动 per-tenant 表迁移(ADR 0024)
 
     // ---- 通用 scope 元数据(对 infra 无语义,键由 Profile 白名单声明) ----
     pub metadata_kv: Vec<String>,    // 默认空;"key:value" 编码,如 subject:物理 / class:高二3班
@@ -163,20 +164,24 @@ pub struct MemoryBase {
     pub text_tokens: String,         // 预分词、空格连接(FTS/BM25 索引建在这列)
     pub vector: Vec<f32>,            // 语义向量(cosine ANN);Arrow 列为 FixedSizeList<f32, EMBED_DIM>
 
-    // ---- 内容指纹(增量 re-embed 优化 + 幂等去重,借鉴 EverOS) ----
+    // ---- 内容指纹 + embedding 溯源(增量 re-embed 优化 + 幂等去重,借鉴 EverOS) ----
     pub content_sha256: String,      // 仅对内容字段哈希;审计字段变更不触发 re-embed
+    pub embed_model: String,         // 产生 vector 的 embedding 模型标识(如 "bge-m3@v1"),ADR 0024
+                                     // re-embed 触发:content_sha256 变 或 embed_model 与当前配置不一致
 
     // ---- 生命周期 ----
     pub created_at: f64,
     pub updated_at: f64,
     pub expires_at: Option<f64>,     // None=不过期;episodic 归档/保留窗可用它
-    pub deprecated: bool,            // 软删除/废弃标记(默认 false)
+    pub deprecated: bool,            // 检索隐藏 / 生命周期标记(默认 false);非合规删除——见下"软删 vs 硬删"
 }
 ```
 
 **双字段 BM25 方案**(借鉴 EverOS):`text` 存原始文本供展示,`text_tokens` 存预分词结果(中文 jieba),FTS 索引建在 `text_tokens`。**为什么拆两列?** 分词策略在模块内可切换,LanceDB FTS 用 whitespace tokenizer 读已分好的 `text_tokens`——换分词器只需重算这一列,不动 schema、不依赖库内置分词器的语言支持。
 
-**`content_sha256`**(借鉴 EverOS):只对参与语义的内容字段哈希。仅审计字段(`updated_at` 等)变动时哈希不变,re-reconcile 时跳过重新 embedding,省调用成本。同时是幂等键的一部分:同 `(source, source_run_ids, content_sha256)` 重复写入不产生新条目(契约测试固化)。
+**`content_sha256`**(借鉴 EverOS):只对参与语义的内容字段哈希。仅审计字段(`updated_at` 等)变动时哈希不变,re-reconcile 时跳过重新 embedding,省调用成本。同时是幂等键的一部分:同 `(source, source_run_ids, content_sha256)` 重复写入不产生新条目(契约测试固化)。**注意**:`content_sha256` 只覆盖内容、不覆盖模型——换 embedding 模型(哪怕维度不变)后旧向量与新查询不在同一空间,故 re-embed 触发条件为 `content_sha256` 变 **或** `embed_model` 与当前配置不一致(ADR 0024),避免"内容没变但模型变了"的行被静默跳过。
+
+**软删 vs 硬删(合规,ADR 0024)**:`deprecated=true` 只把条目排除出检索,原始 `text`/`vector` 仍在 Lance 文件与版本历史——它是生命周期管理,**不是合规删除**。per-user 合规抹除(GDPR / 家长要求删除某学生数据)走**物理硬删**:按 `owner_id` 从表中删除 + 清理 Lance 版本历史,使字节不可追回【待验证:Lance 版本历史清理机制,provider 落地前 spike】。整租户注销仍走 `drop_table`(ADR 0013)。
 
 **`metadata_kv`**(通用 scope 元数据):对 infra 无语义的键值对(教育用 `subject/class/term`,个人助理用 `project` 等),对外 DTO 呈现为 `metadata: HashMap<String, String>`,检索时经 `MetadataFilter` 等值下推(见 [retrieval](./retrieval.md))。比扩 `category` 枚举更灵活,且不让 infra 认识业务概念。**【待验证】**:LanceDB 对 list 列的 `where` 过滤语法(`array_contains` 或等价 SQL),落地前需确认;若不支持,退化为常用 scope 键展开为独立标量列(provider 内部细节,不影响契约)。
 
