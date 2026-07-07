@@ -1,0 +1,18 @@
+# Dependabot:对冲 `=` 精确锁版本在长期维护中的腐烂——每周自动开更新 PR。
+# 覆盖 Cargo 依赖与 GitHub Actions 两个生态(Actions 版本同样需要跟进安全更新)。
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore

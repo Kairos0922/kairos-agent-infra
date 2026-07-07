@@ -64,6 +64,8 @@
 - **命名硬规则 4(DTO)**:Pydantic → **serde 结构体**(`#[derive(Serialize/Deserialize)]`);禁裸 map 跨层传递不变。跨进程 DTO(agent-events / 控制 API)字段命名以协议 wire 格式为准(见 protocol/agent-events),Rust 侧用 `#[serde(rename_all)]` 映射。
 - **强制工具**:import-linter → **Cargo crate 依赖边界**:下层 crate 不声明上层为依赖 → 上层符号物理不可见,违反即**编译失败**(比任何 linter 更硬)。契约三(harness 禁触 providers)用 crate 内 `pub` 可见性 + 架构测试兜底(见 ADR 0021)。禁用词表(`util`/`utils`/`common`/`helper`)、改名即全仓,均不变。
 
+> **追记(2026-07-08,更正强制手段表述)**:上文"架构测试兜底"从未落地,且属冗余——契约三(harness 禁触 providers)已由 `providers` 私有 mod 的可见性物理强制:harness 是外部 crate,无法命名 memory crate 的私有 mod,违反即编译失败。三条契约(单向依赖 / 模块间零依赖 / harness 禁触 providers)均由 crate 边界与 mod 可见性在编译期物理保证,**不再声明也不需要独立的"架构测试兜底"**。结论(用 Cargo 边界取代 import-linter)不变。
+
 ## 影响(原始,Python 阶段)
 
 - 全仓"三层架构/适配层/上层应用层"旧表述替换为六层;删除 `src/kairos/adapter/`。

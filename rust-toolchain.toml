@@ -1,0 +1,6 @@
+# 工具链 pin(治理:构建可复现 + 阻止 clippy 随新 stable 漂移导致 CI 无故变红)。
+# 升级 Rust 是主动动作:改此文件的 channel 即全仓(本地 + CI)统一切换。
+# CI 不再声明 @stable——rustup 会自动读取本文件安装对应工具链与组件。
+[toolchain]
+channel = "1.96.1"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]

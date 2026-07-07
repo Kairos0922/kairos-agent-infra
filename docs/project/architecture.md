@@ -24,7 +24,7 @@
 - **Adapter 在 Rust,MCP 走子进程**:Runtime 自包含、无跨语言热路径;MCP 本是子进程协议,天然跨进程(ADR 0021)。
 
 依赖方向严格单向向下,由 Cargo crate 依赖边界在编译期物理强制
-(分层/模块独立/harness 禁触 providers),辅以架构测试兜底。
+(分层/模块独立/harness 禁触 providers——`providers` 为私有 mod,上层 crate 无法命名)。
 
 ## 2. 各层职责与边界
 

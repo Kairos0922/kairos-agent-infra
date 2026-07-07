@@ -20,7 +20,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.90"
+# MSRV 对齐 rust-toolchain.toml 的 pin(自托管服务,无外部消费者,不承诺更低 MSRV;
+# 升级工具链时两处同步)。
+rust-version = "1.96"
 license = "MIT"
 
 # 共享依赖:锁定精确版本(安全约定:不用开放区间)。各 crate 按需 workspace = true 引用。

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # 每周一 03:17 UTC 定时跑:cargo-deny 需定期扫新 CVE(漏洞公告不随代码变更出现)。
+  schedule:
+    - cron: "17 3 * * 1"
 
 # 同一分支/PR 的并发运行只保留最新一次,取消旧的
 concurrency:
@@ -14,6 +17,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# 工具链版本由 rust-toolchain.toml 单一 pin(1.96.1 + 组件);rustup 在首次 cargo
+# 调用时自动读取安装,CI 不再声明 @stable,避免版本双写漂移。
+
 jobs:
   verify:
     name: 验证链(fmt + clippy + 测试 + crate 边界)
@@ -21,11 +27,6 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - name: 缓存 Cargo
         uses: Swatinem/rust-cache@v2
@@ -49,16 +50,23 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
       - name: 缓存 Cargo
         uses: Swatinem/rust-cache@v2
 
       - name: 安装 cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: 覆盖率(foundation 核心模块门槛 80%)
-        run: cargo llvm-cov --package kairos_foundation --fail-under-lines 80
+      - name: 覆盖率(全 workspace 行覆盖门槛 80%)
+        run: cargo llvm-cov --workspace --fail-under-lines 80
+
+  supply-chain:
+    name: 供应链(cargo-deny:漏洞 / 许可证 / 来源 / 通配)
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: cargo-deny 检查
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources

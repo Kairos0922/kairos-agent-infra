@@ -89,3 +89,7 @@ kairos-agent-infra/
 ## 追记(2026-07-07,ADR 0022)
 
 本 ADR 结论 1「Runtime 即服务,永远一份」中的"一份"指**一份 Runtime *实现***;其生产部署拓扑由 [ADR 0022](./0022-deployment-topology-cell-per-tenant.md) 明确为"每租户(机构)一个相互隔离的 cell + 前置路由"。本 ADR 的单一 Rust 进程模型(+ MCP/sandbox 子进程)、Monorepo 结构、Cargo crate 边界强制结论不变。
+
+## 追记(2026-07-08,更正"架构测试兜底")
+
+上文"影响"中"依赖方向由 Cargo 依赖图强制 **+ 架构测试兜底**"里的架构测试从未落地,且属冗余:六层三契约(单向依赖 / 模块间零依赖 / harness 禁触 providers)已全部由 Cargo crate 依赖边界与 `providers` 私有 mod 可见性在编译期物理强制——违反即编译失败,无需独立架构测试。相关表述已从 ADR 0014、AGENTS.md、architecture.md、foundation.md 一并作废。crate 边界强制的结论不变。

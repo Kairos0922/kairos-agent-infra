@@ -1,0 +1,13 @@
+#!/bin/sh
+# pre-push 钩子:推送前跑格式与 lint,拦住 CI 变红最常见的两类原因,省一趟往返。
+# 版本化在 .githooks/,通过 `cargo xtask install-hooks` 设置 git core.hooksPath 生效。
+# 重活(cargo test / 覆盖率 / cargo-deny)交给 CI,本地只做快反馈的两项。
+set -e
+
+echo "[pre-push] cargo fmt --check"
+cargo fmt --all -- --check
+
+echo "[pre-push] cargo clippy -D warnings"
+cargo clippy --all-targets --all-features -- -D warnings
+
+echo "[pre-push] OK"

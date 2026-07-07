@@ -1,9 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(uv sync:*)",
-      "Bash(uv run:*)",
-      "Bash(python3 tools/check_doc_links.py)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo llvm-cov:*)",
+      "Bash(cargo xtask:*)",
       "WebSearch"
     ],
     "defaultMode": "auto"

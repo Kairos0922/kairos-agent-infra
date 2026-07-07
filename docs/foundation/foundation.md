@@ -81,7 +81,7 @@ kairos-agent-infra/
 | `server` crate | L4 | `assembly`、`harness`、`foundation` | — |
 | `apps/cli`、`apps/ui` | L5 | 仅 server 的 HTTP/协议 API(+ `protocol` 类型) | 任何内层 crate |
 
-> **核心约束**:`memory` crate 的领域逻辑(`store`、`kinds`、`retrieval::searcher`)**不允许依赖 `lancedb` crate,不允许依赖自己的 `providers` mod**。它只依赖模块内的 `contracts` trait;具体实现由组装根(server/harness 启动路径)按配置组装、注入(ADR 0011)。同理 **harness 只依赖各模块 contracts、禁止触碰任何 `providers`**。这些是"可插拔"的命门,由 Cargo crate 依赖边界在编译期强制、辅以架构测试(ADR 0014/0021)。
+> **核心约束**:`memory` crate 的领域逻辑(`store`、`kinds`、`retrieval::searcher`)**不允许依赖 `lancedb` crate,不允许依赖自己的 `providers` mod**。它只依赖模块内的 `contracts` trait;具体实现由组装根(server/harness 启动路径)按配置组装、注入(ADR 0011)。同理 **harness 只依赖各模块 contracts、禁止触碰任何 `providers`**。这些是"可插拔"的命门,由 Cargo crate 依赖边界与 `providers` mod 私有可见性在编译期物理强制(ADR 0014/0021)。
 
 ## 配置管理
 
@@ -266,7 +266,7 @@ async fn recall(&self, ctx: &TenantContext, req: RecallRequest) -> Result<Recall
 
 - 格式化/lint:`cargo fmt` + `cargo clippy`(告警即失败),`foundation` 与模块 `contracts` 要求最严。
 - 类型检查:`cargo check`(编译期),Rust 类型系统天然强制。
-- **依赖方向检查**:Cargo crate 依赖边界——下层 crate 不声明上层,上层符号物理不可见(编译期强制),辅以架构测试兜底。
+- **依赖方向检查**:Cargo crate 依赖边界——下层 crate 不声明上层,上层符号物理不可见;`providers` 为私有 mod,harness 无法触碰(编译期强制)。
 - 测试:`cargo test`(+ `cargo llvm-cov` 覆盖率)。
 - 运行时:tokio async;Runtime 出单二进制(ADR 0019/0021)。
 - 依赖管理:Cargo,**锁定版本**(`Cargo.lock` 入库;安全约定:不用开放区间)。

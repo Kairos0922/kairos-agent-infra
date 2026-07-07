@@ -5,12 +5,14 @@
 ## 工程化基线
 
 - 语言 / 运行时:**Rust**(Runtime,L0–L4 + Adapter,tokio 异步)+ **TypeScript**(UI/客户端,L5)。Runtime 出单二进制(ADR 0019/0021)。
+- 工具链版本:由根 `rust-toolchain.toml` 单一 pin(channel + rustfmt/clippy/llvm-tools-preview 组件),本地与 CI 统一;升级 Rust = 改此文件的 channel + 同步 `Cargo.toml` 的 `rust-version`。
 - 构建 / 包管理:**Cargo**(Rust workspace,`Cargo.lock` 锁定版本);UI 侧 `pnpm`(锁定版本,不用开放区间)。
 - 格式化 + lint:**`cargo fmt` + `cargo clippy`**;UI 侧 `biome`。
 - 类型检查:`cargo check`(编译期);UI 侧 `tsc --noEmit`(strict)。
 - 配置 / DTO:**serde**(TOML 配置 + 结构化 DTO)。
-- 测试:**`cargo test`**(+ `cargo llvm-cov` 覆盖率);UI 侧 `vitest`。
-- 依赖方向:**Cargo crate 边界**(编译期物理强制,六层三契约)+ 架构测试兜底。
+- 测试:**`cargo test`**(+ `cargo llvm-cov` 覆盖率,门槛全 workspace ≥80%);UI 侧 `vitest`。
+- 供应链门禁:**`cargo deny`**(`deny.toml`:漏洞 / 许可证 / 来源 / 通配)在 CI 每次 PR + 每周定时跑。
+- 依赖方向:**Cargo crate 边界**(编译期物理强制,六层三契约:下层不声明上层、模块间零依赖、`providers` mod 私有故 harness 无法触碰)。
 - workspace 与依赖统一在根 `Cargo.toml`;各 crate 自己的 `Cargo.toml` 声明层间依赖。
 
 ### 常用命令
@@ -21,7 +23,8 @@ cargo fmt --all -- --check     # 格式检查
 cargo clippy --all-targets -- -D warnings   # lint(告警即失败)
 cargo check --all-targets      # 编译期类型检查
 cargo test --all               # 测试(含单元 + 契约 + 集成)
-cargo llvm-cov --all           # 测试 + 覆盖率
+cargo llvm-cov --workspace     # 测试 + 覆盖率(门槛 ≥80%)
+cargo deny check               # 供应链门禁(漏洞/许可证/来源/通配)
 
 # UI/客户端(apps/ui)
 pnpm -C apps/ui install --frozen-lockfile
@@ -30,6 +33,7 @@ pnpm -C apps/ui typecheck      # tsc --noEmit
 pnpm -C apps/ui test           # vitest
 
 cargo xtask check-docs         # 文档内部链接与锚点检查(收尾必跑;Rust 实现,零外部依赖)
+cargo xtask install-hooks      # 设置 git core.hooksPath = .githooks(启用 pre-push 快反馈;新 clone 后跑一次)
 ```
 
 > 完整验证链(提交前必过):Rust 侧 `cargo fmt --check` → `cargo clippy -D warnings` → `cargo test`;UI 侧 `biome` → `tsc` → `vitest`,与 CI(`../.github/workflows/ci.yml`)一致。六层依赖方向由 Cargo crate 边界在 `cargo check` 时即强制。
