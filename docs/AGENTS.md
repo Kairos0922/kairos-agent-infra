@@ -19,10 +19,11 @@
 - **跨层交叉引用**:改契约/DTO 时核对 harness 消费方(context/tools/distill)与 memory 契约是否对齐;改分层命名时核对命名硬规则([`../crates/AGENTS.md`](../crates/AGENTS.md))、workspace `Cargo.toml` 的 crate 依赖边界、`project/architecture.md`。
 - **进度**:根 `../PROGRESS.md`(任务项 + 变更记录)。
 
-收尾两步,缺一不可:
+收尾三步,缺一不可:
 
 1. 运行 `cargo xtask check-docs`,确认内部链接与锚点全绿。
-2. `grep` 被替换的旧术语/旧字段名,确认全仓无残留。
+2. 运行 `cargo xtask doc-sync`,确认 ADR 索引与 `adr/` 文件一一对应、无废弃术语残留(新增 ADR 忘更新索引表会在此被拦下)。
+3. `grep` 被替换的旧术语/旧字段名,确认全仓无残留;若属重大改名,顺手在 `xtask/src/doc_sync.rs` 的 `DEPRECATED_TERMS` 登记一行,让后续自动拦截。
 
 ## 文档洁癖
 
