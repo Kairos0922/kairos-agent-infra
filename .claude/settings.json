@@ -8,6 +8,7 @@
       "Bash(cargo test:*)",
       "Bash(cargo llvm-cov:*)",
       "Bash(cargo xtask:*)",
+      "Bash(curl -s *)",
       "WebSearch"
     ],
     "defaultMode": "auto"

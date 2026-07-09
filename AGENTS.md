@@ -2,6 +2,8 @@
 
 本文件是 Kairos Agent Infra 项目对所有 Code Agent(Claude Code、Codex、opencode 等)的协作规范。**所有规范一旦确立必须长期遵守,不随意更改。**
 
+> **领域术语速查**见 [`CONTEXT.md`](./CONTEXT.md)——六层架构、模块、租户等核心概念的精确定义与推荐用词。每次会话只读一次即留用。
+>
 > **分场景细则按需查阅**(避免本文件膨胀,每次会话只载入全局常用):
 > - 改 **Rust 代码**(crates/apps/xtask)→ 工程化基线、常用命令、命名硬规则、测试门槛、代码洁癖、提交规范见 [`crates/AGENTS.md`](./crates/AGENTS.md)。
 > - 改 **文档**(docs/)→ 文档传播清单、文档洁癖、ADR 规范、文档命名见 [`docs/AGENTS.md`](./docs/AGENTS.md)。
