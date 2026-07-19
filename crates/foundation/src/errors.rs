@@ -116,6 +116,19 @@ impl KairosError {
         self
     }
 
+    /// 该错误是否可重试。仅 `Provider` 变体在封装时显式标记可重试(429/5xx/网络类);
+    /// `Config`/`Validation`/`NotConfigured` 均为调用方或配置问题,重试无意义,恒为 false。
+    /// model_gateway 据此决定重试/降级(见模块文档 §3)。
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Provider {
+                retryable: true,
+                ..
+            }
+        )
+    }
+
     /// 只读访问 details。
     pub fn details(&self) -> &ErrorDetails {
         match self {
@@ -172,6 +185,15 @@ mod tests {
         }
         // source 保留可经 std::error::Error::source 访问
         assert!(std::error::Error::source(&e).is_some());
+    }
+
+    #[test]
+    fn is_retryable_only_for_retryable_provider() {
+        assert!(KairosError::provider("openai", "x", true).is_retryable());
+        assert!(!KairosError::provider("openai", "x", false).is_retryable());
+        assert!(!KairosError::config("x").is_retryable());
+        assert!(!KairosError::validation("x").is_retryable());
+        assert!(!KairosError::not_configured("x", None).is_retryable());
     }
 
     #[test]

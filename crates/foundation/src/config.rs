@@ -24,6 +24,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -76,13 +77,19 @@ impl Default for LoadOptions {
     }
 }
 
-/// 加载配置:分层合并后经 serde 反序列化。优先级由高到低:
+/// 加载任意强类型配置:分层合并后经 serde 反序列化。优先级由高到低:
 /// 环境变量 > .env > 项目 config.toml > 全局 config.toml > 代码默认值。
+///
+/// 模块把自己的配置结构作为 `T` 传入即可复用该机制;业务字段仍归模块自身,
+/// 不得回填到底座配置结构。
 ///
 /// # Errors
 /// TOML 解析失败或字段类型非法时返回 [`KairosError::Config`],fail-fast。
-pub fn load_settings(opts: &LoadOptions) -> Result<KairosSettings, KairosError> {
-    let merged = merge_layers::<KairosSettings>(opts)?;
+pub fn load_settings<T>(opts: &LoadOptions) -> Result<T, KairosError>
+where
+    T: Default + Serialize + DeserializeOwned,
+{
+    let merged = merge_layers::<T>(opts)?;
     merged.try_into().map_err(|e: toml::de::Error| {
         KairosError::config("配置校验失败").with_detail("reason", e.to_string())
     })
@@ -320,7 +327,7 @@ mod tests {
     #[test]
     fn settings_defaults_when_no_source() {
         let dir = tmpdir();
-        let s = load_settings(&opts_in(&dir)).unwrap();
+        let s: KairosSettings = load_settings(&opts_in(&dir)).unwrap();
         assert_eq!(s.log_level, "INFO");
     }
 
@@ -329,7 +336,7 @@ mod tests {
         let dir = tmpdir();
         let mut opts = opts_in(&dir);
         opts.env = Some(env_pairs(&[("KAIROS_LOG_LEVEL", "ERROR")]));
-        let s = load_settings(&opts).unwrap();
+        let s: KairosSettings = load_settings(&opts).unwrap();
         assert_eq!(s.log_level, "ERROR");
     }
 
@@ -371,10 +378,7 @@ mod tests {
 
     /// 用 fixture 走一遍分层合并 + 反序列化(复用生产 merge_layers 机制)。
     fn load_fixture(opts: &LoadOptions) -> Result<Fixture, KairosError> {
-        let merged = merge_layers::<Fixture>(opts)?;
-        merged.try_into().map_err(|e: toml::de::Error| {
-            KairosError::config("fixture 校验失败").with_detail("reason", e.to_string())
-        })
+        load_settings(opts)
     }
 
     #[test]
@@ -499,7 +503,7 @@ mod tests {
         let mut opts = opts_in(&dir);
         opts.project_config_file = bad;
         assert!(matches!(
-            load_settings(&opts),
+            load_settings::<KairosSettings>(&opts),
             Err(KairosError::Config { .. })
         ));
     }
