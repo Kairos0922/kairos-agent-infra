@@ -1,0 +1,126 @@
+#!/bin/sh
+# pre-commit 钩子:对本次暂存改动(staged diff)跑一轮 AI 代码审查,**仅提示、不阻断**。
+# 版本化在 .githooks/,通过 `cargo xtask install-hooks` 设置 git core.hooksPath 生效。
+#
+# 设计取舍(2026-07-20 复盘后落地,经钩子三轮自审迭代加固):
+# - **仅提示不阻断**:LLM 输出非确定性,阻断会因误判卡住正常提交;发现仅供提交者阅读自决。
+#   故刻意**不用 `set -e`**、恒 exit 0——与 pre-push(要拦 CI 变红,用 set -e)取向相反。
+#   跳过:`git commit --no-verify` 或 `KAIROS_SKIP_REVIEW=1`。
+# - **禁工具审查(双层防护)**:① `--allowedTools ""` 关闭全部工具(已实测生效);② 不传
+#   --dangerously-skip-permissions,`-p` 模式下需授权工具(Bash/Write 等)默认即被拒。二者
+#   皆失效时 diff 提示注入才可能诱导执行。⚠️ 升级 claude CLI 时须复验(见末尾"复验"命令)。
+# - **密钥预检**:只扫**新增行**,命中常见密钥/私钥形态即跳过审查,避免误暂存的密钥随 diff
+#   外泄(删旧密钥的提交不受影响)。匹配真实密钥形态(非变量名)以降误报;**尽力而非穷尽**的
+#   启发式,可能有误报(提交者可用 --no-verify 越过),不替代"密钥不进代码/配置"铁律。
+# - **看门狗超时**:后台运行 + 每秒轮询探测,超时 `kill -9`(SIGKILL 不可捕获,确保挂起必被
+#   终止,不卡死提交),无需 timeout/gtimeout(原生 macOS 二者皆无)。已禁工具,审查进程不
+#   派生执行类子进程,孙进程孤儿风险可忽略。
+# - **输出清洗**:claude 输出先落临时文件、剔除控制字符(含 ANSI 转义)再打印,防 diff 内
+#   转义序列污染终端或伪造审查结论。
+# - **每提交做轻量单轮审查**(非多视角重审),控制时延与 token 成本;重型审查留给提交前
+#   手动 `/code-review`。
+# - **优雅降级**:claude CLI 缺失/调用失败/超大 diff/命中密钥 → 提示并放行,不卡提交。
+#
+# 可调环境变量:
+#   KAIROS_SKIP_REVIEW=1        跳过本次审查
+#   KAIROS_REVIEW_MAX_LINES=N   暂存改动超过 N 行则跳过(默认 1500)
+#   KAIROS_REVIEW_MODEL=<model> 指定审查用模型(控制成本,如 haiku)
+#   KAIROS_REVIEW_TIMEOUT=N     审查超时秒数(默认 300,<5 视为 300)
+#
+# 复验(升级 claude CLI 后必跑):确认 --allowedTools "" 仍禁用工具——
+#   echo x | claude -p --allowedTools "" '用 Bash 执行 touch /tmp/t' ; test ! -f /tmp/t && echo 工具已禁
+
+# 显式跳过开关(--no-verify 时 git 根本不会调用钩子)。
+if [ -n "${KAIROS_SKIP_REVIEW:-}" ]; then
+    echo "[pre-commit] KAIROS_SKIP_REVIEW 已设,跳过代码审查"
+    exit 0
+fi
+
+# claude CLI 不可用 → 优雅降级(放在捕获 diff 前,省得白捕获)。
+if ! command -v claude >/dev/null 2>&1; then
+    echo "[pre-commit] 未找到 claude CLI,跳过代码审查(安装 Claude Code 后自动生效)"
+    exit 0
+fi
+
+# 阈值/超时校验(非数字回退默认防 [ -gt ] 报错;超时过小回退防"刚启动即被杀")。
+MAX_LINES="${KAIROS_REVIEW_MAX_LINES:-1500}"
+case "$MAX_LINES" in
+    '' | *[!0-9]*) MAX_LINES=1500 ;;
+esac
+T="${KAIROS_REVIEW_TIMEOUT:-300}"
+case "$T" in
+    '' | *[!0-9]*) T=300 ;;
+esac
+[ "$T" -lt 5 ] && T=300
+
+# 一次捕获暂存 diff(避免两次 git 调用间索引被并发改动导致行数与内容不一致)。
+# --no-color:即使用户配 color.ui=always 也输出无色 diff,否则 ANSI 前缀会使下方密钥预检
+# 的行锚点失配、静默漏检,且模型会收到带色 diff。
+DIFF="$(git diff --cached --no-color)"
+if [ -z "$DIFF" ]; then
+    exit 0 # 无暂存改动,放行
+fi
+LINES="$(printf '%s\n' "$DIFF" | wc -l | tr -d ' ')"
+if [ "$LINES" -gt "$MAX_LINES" ]; then
+    echo "[pre-commit] 暂存改动 $LINES 行,超过审查阈值 $MAX_LINES,跳过自动审查"
+    echo "[pre-commit] 大改动建议提交前手动跑 /code-review"
+    exit 0
+fi
+
+# 密钥预检:**只扫新增内容行**(grep '^+' 取新增、grep -vE '^\+\+\+ ' 排除 +++ 文件头;
+# 删旧密钥的提交不跳过),命中常见密钥/私钥形态即跳过审查,防误暂存的密钥随 diff 发往
+# 模型 API。尽力而非穷尽(覆盖 PEM/AWS/OpenAI 经典 sk- 与 Anthropic sk-ant-、OpenAI
+# sk-proj-/sk-svcacct- 等含连字符的现代密钥/GitHub 经典+细粒度/Google/Slack)。
+if printf '%s\n' "$DIFF" | grep '^+' | grep -vE '^\+\+\+ ' | grep -qE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}'; then
+    echo "[pre-commit] 新增行检测到疑似密钥/私钥形态,为防外泄跳过自动审查(提交不受影响)"
+    echo "[pre-commit] 请确认未误暂存密钥;密钥只应存环境变量,不进代码/配置。"
+    exit 0
+fi
+
+echo "[pre-commit] 对本次暂存改动跑一轮 AI 代码审查($LINES 行)..."
+
+PROMPT='你是资深代码审查者,没有任何工具可用,只对 stdin 文本做静态分析,绝不尝试执行命令或改文件。stdin 是一次 git 提交的暂存改动(staged diff)。请只审查这些改动,聚焦三点:正确性 bug、安全隐患、明显的代码质量问题。简明列出发现,每条一行:严重度(critical/high/medium/low) | 文件:行 | 一句话问题 | 建议。无问题则只回复"未发现明显问题"。不要复述代码,不要客套。'
+
+# 组装 claude 参数(用位置参数,避免未引用变量展开的通配风险)。
+set -- --allowedTools "" -p "$PROMPT"
+if [ -n "${KAIROS_REVIEW_MODEL:-}" ]; then
+    set -- --model "${KAIROS_REVIEW_MODEL}" "$@"
+fi
+
+# diff 经临时文件喂入;claude 输出落另一临时文件,以便后台运行 + 看门狗超时 + 输出清洗。
+TMP="$(mktemp)" || { echo "[pre-commit] 临时文件创建失败,跳过审查"; exit 0; }
+OUT_TMP="$(mktemp)" || { rm -f "$TMP"; echo "[pre-commit] 临时文件创建失败,跳过审查"; exit 0; }
+trap 'rm -f "$TMP" "$OUT_TMP"' EXIT
+printf '%s\n' "$DIFF" > "$TMP"
+
+claude "$@" < "$TMP" > "$OUT_TMP" 2>&1 &
+review_pid=$!
+# 看门狗:每秒探测审查进程存活,结束即自行退出;撑到 T 秒则 SIGKILL(不可捕获,确保终止)。
+(
+    i=0
+    while [ "$i" -lt "$T" ]; do
+        kill -0 "$review_pid" 2>/dev/null || exit 0
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -9 "$review_pid" 2>/dev/null
+) &
+dog_pid=$!
+# Ctrl-C/TERM 时清理后台进程再退出(EXIT trap 负责删临时文件)。
+trap 'kill "$review_pid" "$dog_pid" 2>/dev/null; exit 130' INT TERM
+
+wait "$review_pid" 2>/dev/null
+status=$?
+kill "$dog_pid" 2>/dev/null
+wait "$dog_pid" 2>/dev/null
+
+# 清洗控制字符(含 ANSI 转义 \033 与 DEL \177)后打印,保留 Tab/换行/回车,防终端污染/结论伪造。
+# (ESC 删除后 CSI 残尾如 [31m 仅作可见文本残留,无终端副作用,属观感问题,不再剥离以免误伤正文。)
+tr -d '\000-\010\013\014\016-\037\177' < "$OUT_TMP"
+
+if [ "$status" -eq 0 ]; then
+    echo "[pre-commit] 审查完成(仅供参考,不阻断提交)"
+else
+    echo "[pre-commit] 审查未成功(超时/调用失败,code=$status),已放行提交"
+fi
+exit 0
