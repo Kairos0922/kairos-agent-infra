@@ -40,7 +40,7 @@ eventsource-stream = "=0.2.3"
 futures-util = "=0.3.32"
 reqwest = { version = "=0.13.4", default-features = false, features = ["rustls", "json", "stream"] }
 tracing = "=0.1.41"
-tracing-subscriber = { version = "=0.3.19", features = ["json", "env-filter"] }
+tracing-subscriber = { version = "=0.3.20", features = ["json", "env-filter"] }
 # 0.6.5 要求 tokio ^1.47.1,与 workspace 精确锁定的 tokio =1.43.0 冲突;
 # 0.6.4 仅需 ^1.5.0。wiremock 为 dev-only 测试依赖,降 patch 而非动全 workspace 运行时 tokio。
 wiremock = "=0.6.4"
