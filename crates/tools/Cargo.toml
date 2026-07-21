@@ -1,0 +1,21 @@
+# tools(L1):工具的定义、注册与单次调用的执行。
+# 契约 crate:只有 contracts(trait + DTO),providers 为私有 mod(待 builtin/MCP 实现时补)。
+# ToolCall/ToolDefinition 归 model_gateway(模型协议 DTO);本 crate 只定义
+# ToolSpec/ToolResult/ToolExecutor,执行请求用自有的 ToolExecuteRequest。
+[package]
+name = "kairos_tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "tools"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio-util = { workspace = true }

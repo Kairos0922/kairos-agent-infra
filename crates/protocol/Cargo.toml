@@ -1,4 +1,7 @@
-# protocol:agent-events + 控制 API 的 Rust 侧类型定义。语言无关的稳定边界,只依赖 serde。
+# protocol:agent-events + 控制 API 的 Rust 侧类型定义。语言无关的稳定边界。
+# 事件是 Runtime(Rust)与 UI(TS)之间的稳定跨语言边界(ADR 0021)。
+# Schema 事实源:AgentEvent 枚举(ADR 修订 agent-events.md §4,原路径 harness/hitl/events.rs
+# 为早期骨架时代的过时描述——事件不只属于 hitl,归 protocol 与 crate 定位一致)。
 [package]
 name = "kairos_protocol"
 version.workspace = true
@@ -12,3 +15,5 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

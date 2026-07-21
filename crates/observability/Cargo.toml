@@ -1,0 +1,20 @@
+# observability(L1):Step 的持久化与查询。
+# 契约 crate:contracts(StepSink/TraceQuery trait)+ Step 自包含 DTO。
+# 全部 DTO 不 import 其他 L1 模块类型(模块间零依赖);harness 构建 Step 时做类型转换。
+[package]
+name = "kairos_observability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "observability"
+path = "src/lib.rs"
+
+[dependencies]
+kairos_foundation = { path = "../foundation" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }

@@ -1,5 +1,4 @@
 # harness(L2):唯一跨模块编排层。只依赖各模块 contracts 与 foundation(禁触 providers)。
-# 依赖 memory 时只用其公开的 contracts;providers 为私有 mod,不可见(六层契约三)。
 [package]
 name = "kairos_harness"
 version.workspace = true
@@ -13,5 +12,19 @@ path = "src/lib.rs"
 
 [dependencies]
 kairos_foundation = { path = "../foundation" }
-kairos_memory = { path = "../memory" }
+kairos_model_gateway = { path = "../model_gateway" }
+# M9 修复:kairos_memory 已移除(零 use memory::,retrievers.rs 用本地占位 trait)。
+# 待 memory 模块 Retriever 契约落地后再接入。
+kairos_tools = { path = "../tools" }
+kairos_observability = { path = "../observability" }
 kairos_protocol = { path = "../protocol" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+futures-util = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tiktoken-rs = { workspace = true }

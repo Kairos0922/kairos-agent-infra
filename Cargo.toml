@@ -10,6 +10,8 @@ members = [
     "crates/foundation",
     "crates/model_gateway",
     "crates/memory",
+    "crates/tools",
+    "crates/observability",
     "crates/harness",
     "crates/assembly",
     "crates/server",
@@ -32,7 +34,7 @@ serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.140"
 toml = "=1.1.2"
 thiserror = "=2.0.11"
-tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "sync"] }
+tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "sync", "time"] }
 async-trait = "=0.1.86"
 eventsource-stream = "=0.2.3"
 futures-util = "=0.3.32"
@@ -42,6 +44,14 @@ tracing-subscriber = { version = "=0.3.19", features = ["json", "env-filter"] }
 # 0.6.5 要求 tokio ^1.47.1,与 workspace 精确锁定的 tokio =1.43.0 冲突;
 # 0.6.4 仅需 ^1.5.0。wiremock 为 dev-only 测试依赖,降 patch 而非动全 workspace 运行时 tokio。
 wiremock = "=0.6.4"
+# 0.7.18 要求 tokio ^1.44.0,与 workspace 精确锁定的 tokio =1.43.0 冲突;
+# 0.7.14 仅需 ^1.0.0。降 patch 而非动全 workspace 运行时 tokio(同 wiremock 策略)。
+tokio-util = "=0.7.14"
+chrono = { version = "=0.4.45", features = ["serde"] }
+uuid = { version = "=1.24.0", features = ["v4"] }
+tiktoken-rs = "=0.12.0"
+# schemars 已移除(M8):全仓零消费者,protocol 未 derive JsonSchema,CI 无 schema 导出。
+# 待 JSON Schema 导出真正落地时再引入。
 
 # 发布档:Runtime 主部署目标为机构云(ADR 0019 追记 / ADR 0022 cell-per-tenant)。
 # panic = "unwind":单次 panic 由 tokio 在 task 边界捕获,不打穿服务多用户的整个 cell
